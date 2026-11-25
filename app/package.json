@@ -1,7 +1,7 @@
 {
   "name": "moonfish",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Moonfish — a chat-first desktop app for coding agents",
   "type": "module",
   "scripts": {

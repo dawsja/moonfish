@@ -1,0 +1,15 @@
+[package]
+name = "moonfish-core"
+description = "Moonfish: where data lives, settings, projects and SSH hosts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+dirs.workspace = true
+
+tempfile = "3"

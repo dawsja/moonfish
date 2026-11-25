@@ -1,0 +1,77 @@
+name: CI
+
+# Branches only: a release tag (desktop-v*, android-v*) points at a commit CI already checked on
+# main; release.yml and android.yml build it.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Install
+        working-directory: app
+        run: bun install --frozen-lockfile
+      - name: Typecheck and build
+        working-directory: app
+        run: bun run web:build
+      - name: Phone app build (phone/)
+        working-directory: app
+        run: bun run mobile:build
+      - name: Tests
+        working-directory: app
+        run: bun run test && bun test scripts
+
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        # A slow Ubuntu mirror can stall this: retry, then give up.
+        timeout-minutes: 15
+        run: .github/scripts/apt-install.sh libwebkit2gtk-4.1-dev libssl-dev librsvg2-dev libxdo-dev libayatana-appindicator3-dev libdbus-1-dev
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Frontend dist for tauri::generate_context
+        shell: bash
+        run: |
+          mkdir -p app/dist app/dist-mobile
+          echo '<!doctype html>' > app/dist/index.html
+          echo '<!doctype html>' > app/dist-mobile/mobile.html
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test --workspace
+
+  rust-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: rust-macos
+      - name: Clippy
+        run: cargo clippy -p moonfish-host -p moonfish-transport -p moonfish-agents --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test -p moonfish-host -p moonfish-transport -p moonfish-agents

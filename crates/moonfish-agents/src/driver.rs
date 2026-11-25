@@ -1,0 +1,138 @@
+//! A running agent CLI behind one chat. [`start`] picks the driver for the agent; every driver
+//! reports through a [`Sink`] and takes prompts, interrupts and approval answers.
+
+use std::sync::Arc;
+
+use moonfish_core::settings::{AgentKind, EnvVar, Location, PermissionMode};
+use serde::Deserialize;
+
+use crate::event::{ChatEvent, Decision};
+
+/// Where a driver's events go. Called from the driver's reader thread.
+pub type Sink = Arc<dyn Fn(ChatEvent) + Send + Sync>;
+
+#[derive(Debug, Clone)]
+pub struct StartOptions {
+    pub kind: AgentKind,
+    /// The folder the agent works in (on `location`).
+    pub cwd: String,
+    pub location: Location,
+    /// The CLI; empty is the usual command.
+    pub binary: String,
+    pub model: Option<String>,
+    /// Reasoning effort (`low` … `max`); none is the model's default.
+    pub effort: Option<String>,
+    pub fast_mode: Option<bool>,
+    pub permission: PermissionMode,
+    /// The CLI's session id to continue, from an earlier `Started`.
+    pub resume: Option<String>,
+    pub env: Vec<EnvVar>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Image {
+    /// `image/png`…
+    pub mime: String,
+    /// Base64 bytes.
+    pub data: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Prompt {
+    pub id: String,
+    pub text: String,
+    #[serde(default)]
+    pub images: Vec<Image>,
+    /// The images as saved with the chat (set by the app before the agent gets them).
+    #[serde(default)]
+    pub files: Vec<String>,
+}
+
+pub type DriverResult<T> = Result<T, String>;
+
+#[derive(Clone, Copy)]
+pub enum GoalCommand<'a> {
+    Set(&'a str),
+    Pause,
+    Resume,
+    Clear,
+}
+
+pub trait Driver: Send {
+    /// Sends a user message; the reply streams to the sink.
+    fn send(&mut self, prompt: Prompt) -> DriverResult<()>;
+    /// Stops the current turn (the CLI keeps running).
+    fn interrupt(&mut self) -> DriverResult<()>;
+    /// Answers an [`crate::event::ApprovalRequest`].
+    fn answer(&mut self, request_id: &str, decision: Decision) -> DriverResult<()>;
+    /// Changes the permission mode for the next tool calls, when the CLI can.
+    fn set_permission(&mut self, _mode: PermissionMode) -> DriverResult<()> {
+        Ok(())
+    }
+    /// Whether the running CLI can switch to `mode` (else it's restarted, resuming its session,
+    /// before the next message, as for [`Driver::set_effort`]).
+    fn takes_permission(&self, _mode: PermissionMode) -> bool {
+        true
+    }
+    /// Answers a [`crate::event::QuestionRequest`]: answers by question id.
+    fn answer_question(&mut self, _request_id: &str, _answers: std::collections::BTreeMap<String, Vec<String>>) -> DriverResult<()> {
+        Err("this agent doesn't ask questions".into())
+    }
+    /// Switches the model for the next turns.
+    fn set_model(&mut self, _model: &str) -> DriverResult<()> {
+        Ok(())
+    }
+    /// False when changing speed requires resuming the CLI with new launch settings.
+    fn set_fast_mode(&mut self, _fast_mode: Option<bool>) -> DriverResult<bool> {
+        Ok(false)
+    }
+    /// Switches the reasoning effort (empty: the model's default). `false`: the CLI only takes
+    /// it when it starts, so it has to be restarted (resuming its session) to apply it.
+    fn set_effort(&mut self, _effort: &str) -> DriverResult<bool> {
+        Ok(false)
+    }
+    /// Stops one background task (see [`crate::event::BackgroundTask::stoppable`]).
+    fn stop_task(&mut self, _task_id: &str) -> DriverResult<()> {
+        Err("this agent can't stop its background work from Moonfish".into())
+    }
+    /// How many background tasks are running: the CLI is busy even between turns, so it isn't
+    /// put to sleep or restarted under them.
+    fn background(&self) -> usize {
+        0
+    }
+    /// No turn is running (so restarting the CLI loses nothing).
+    fn idle(&self) -> bool {
+        true
+    }
+    /// Whether this CLI can reopen its saved session after stopping.
+    fn resumable(&self) -> bool {
+        false
+    }
+    /// `/compact`: summarizes the conversation so far, when the agent has a way to (Codex's
+    /// `thread/compact/start`). `false`: it takes `/compact` as a message instead.
+    fn compact(&mut self, _instructions: &str) -> DriverResult<bool> {
+        Ok(false)
+    }
+    fn goal(&mut self, _command: GoalCommand<'_>) -> DriverResult<()> {
+        Err("This agent does not expose native goal controls.".into())
+    }
+    fn goal_needs_restart(&self) -> bool {
+        false
+    }
+    /// Ends the CLI process.
+    fn stop(&mut self);
+}
+
+/// Starts the agent for `opts`. `MOONFISH_MOCK_AGENT=1` swaps every agent for the scripted mock.
+pub fn start(opts: StartOptions, sink: Sink) -> DriverResult<Box<dyn Driver>> {
+    if std::env::var("MOONFISH_MOCK_AGENT").is_ok_and(|v| v == "1") {
+        return Ok(Box::new(crate::mock::MockDriver::start(opts, sink)));
+    }
+    match opts.kind {
+        AgentKind::Claude => crate::claude::ClaudeDriver::start(opts, sink).map(|d| Box::new(d) as Box<dyn Driver>),
+        AgentKind::Codex => crate::codex::CodexDriver::start(opts, sink).map(|d| Box::new(d) as Box<dyn Driver>),
+        AgentKind::Antigravity => crate::acp::AcpDriver::start(opts, sink).map(|d| Box::new(d) as Box<dyn Driver>),
+    }
+}

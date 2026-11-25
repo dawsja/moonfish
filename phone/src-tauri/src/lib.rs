@@ -1,0 +1,460 @@
+//! The Moonfish phone app's Rust side: the phone's key, the desktops it paired with, and one live
+//! session at a time (reconnecting on its own). The UI calls the desktop through `rpc` and gets
+//! its pushes, and the connection's ups and downs, on the channel it passed to `connect`. With
+//! alerts on ([`alerts`]), the same session tells the phone when a chat needs you.
+
+mod alerts;
+mod appearance;
+mod demo;
+mod images;
+
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use moonfish_remote::client::{self, Client};
+use moonfish_remote::pairing;
+use moonfish_remote::Identity;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use tauri::ipc::Channel;
+use tauri::{Manager, State};
+use tokio::sync::Notify;
+
+/// The port the desktop listens on unless it was changed there.
+const DEFAULT_PORT: u16 = 7787;
+/// Waits between reconnect tries; the last repeats.
+const BACKOFF: &[u64] = &[500, 1000, 2000, 4000, 8000, 15000, 30000];
+
+/// A desktop this phone paired with.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Desktop {
+    /// The desktop's public key (base64): who it is.
+    pub id: String,
+    pub name: String,
+    /// `host:port` to try.
+    pub addresses: Vec<String>,
+    /// What the desktop calls this phone.
+    pub device_id: String,
+    pub paired_at: u64,
+    /// The address that answered last (tried first).
+    #[serde(default)]
+    pub last_address: Option<String>,
+    /// The demo desktop inside the app ([`demo`]), not a computer.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub demo: bool,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Saved {
+    /// This phone's private key (base64). The app's data folder is private to the app.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    device_key: String,
+    desktops: Vec<Desktop>,
+    /// Settings → Alerts.
+    #[serde(default)]
+    alerts: alerts::Settings,
+}
+
+struct Live {
+    desktop_id: String,
+    client: Arc<Mutex<Option<Arc<Client>>>>,
+    wake: Arc<Notify>,
+    task: tauri::async_runtime::JoinHandle<()>,
+    /// Alerts about this desktop's chats, and the task that follows them.
+    watcher: alerts::Watcher,
+    watch_task: tauri::async_runtime::JoinHandle<()>,
+}
+
+pub struct AppState {
+    path: PathBuf,
+    saved: Arc<Mutex<Saved>>,
+    identity: Identity,
+    live: Mutex<Option<Live>>,
+    /// The demo desktop, while it runs (never saved).
+    demo: Mutex<Option<demo::Demo>>,
+}
+
+impl AppState {
+    fn load(path: PathBuf) -> AppState {
+        let mut saved: Saved = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+        let identity = Identity::from_private_b64(&saved.device_key).unwrap_or_else(Identity::generate);
+        saved.device_key = identity.private_b64();
+        let state = AppState { path, saved: Arc::new(Mutex::new(saved)), identity, live: Mutex::new(None), demo: Mutex::new(None) };
+        state.save();
+        state
+    }
+
+    fn save(&self) {
+        let s = self.saved.lock().unwrap();
+        if let Some(dir) = self.path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let tmp = self.path.with_extension("json.tmp");
+        if std::fs::write(&tmp, serde_json::to_vec_pretty(&*s).unwrap()).is_ok() {
+            let _ = std::fs::rename(&tmp, &self.path);
+        }
+    }
+
+    fn desktop(&self, id: &str) -> Option<Desktop> {
+        let saved = self.saved.lock().unwrap().desktops.iter().find(|d| d.id == id).cloned();
+        saved.or_else(|| self.demo.lock().unwrap().as_ref().map(|d| d.desktop.clone()).filter(|d| d.id == id))
+    }
+
+    fn stop(&self) {
+        if let Some(l) = self.live.lock().unwrap().take() {
+            l.task.abort();
+            l.watch_task.abort();
+            // Nothing follows that desktop now: its notifications and the service go.
+            l.watcher.reset();
+        }
+    }
+
+    fn alerts(&self) -> alerts::Settings {
+        self.saved.lock().unwrap().alerts
+    }
+
+    fn set_alerts(&self, f: impl FnOnce(&mut alerts::Settings)) {
+        f(&mut self.saved.lock().unwrap().alerts);
+        self.save();
+    }
+
+    /// The live session's alerts and its client (while connected); only if it's with
+    /// `desktop_id`, when given.
+    fn live_watcher(&self, desktop_id: Option<&str>) -> Option<(alerts::Watcher, Option<Arc<Client>>)> {
+        let live = self.live.lock().unwrap();
+        let l = live.as_ref().filter(|l| desktop_id.is_none_or(|d| d == l.desktop_id))?;
+        let client = l.client.lock().unwrap().clone();
+        Some((l.watcher.clone(), client))
+    }
+}
+
+/// `192.168.1.20` → `192.168.1.20:7787`; `host:port` and `[v6]:port` stay as they are.
+fn with_port(a: &str) -> String {
+    let a = a.trim().trim_start_matches("ws://").trim_start_matches("http://").trim_end_matches('/');
+    let has_port = if a.starts_with('[') { a.contains("]:") } else { a.matches(':').count() == 1 };
+    if has_port {
+        a.to_string()
+    } else if a.contains(':') {
+        format!("[{a}]:{DEFAULT_PORT}")
+    } else {
+        format!("{a}:{DEFAULT_PORT}")
+    }
+}
+
+/// The desktops paired with this phone (and the demo, while it runs).
+#[tauri::command]
+fn desktops(state: State<AppState>) -> Vec<Desktop> {
+    let mut all = state.saved.lock().unwrap().desktops.clone();
+    all.extend(state.demo.lock().unwrap().as_ref().map(|d| d.desktop.clone()));
+    all
+}
+
+/// Starts the demo desktop inside the app (once) and pairs with it: something to connect to
+/// for a person without Moonfish on a computer yet.
+#[tauri::command]
+async fn demo_start(state: State<'_, AppState>) -> Result<Desktop, String> {
+    if let Some(d) = state.demo.lock().unwrap().as_ref() {
+        return Ok(d.desktop.clone());
+    }
+    let started = demo::start(&state.identity).await?;
+    let mut demo = state.demo.lock().unwrap();
+    Ok(demo.get_or_insert(started).desktop.clone())
+}
+
+/// How the app was asked to start: `MOONFISH_DEMO=1` opens the demo, `MOONFISH_ROUTE` a screen (`/settings`,
+/// `/chat/<id>`). For screenshots and tests that drive the real app.
+#[tauri::command]
+fn launch() -> Value {
+    let on = |name: &str| std::env::var(name).is_ok_and(|v| !v.is_empty() && v != "0");
+    json!({ "demo": on("MOONFISH_DEMO"), "route": std::env::var("MOONFISH_ROUTE").ok().filter(|r| r.starts_with('/')) })
+}
+
+/// Desktops near this phone, from a UDP broadcast. Only a hint: pairing still needs the code.
+#[tauri::command]
+async fn discover() -> Result<Vec<moonfish_remote::discovery::Found>, String> {
+    moonfish_remote::discovery::discover().await
+}
+
+#[tauri::command]
+async fn request_pairing(address: String, name: String) -> Result<(), String> {
+    let name: String = name.chars().filter(|c| !c.is_control()).take(32).collect();
+    client::request_pairing(&with_port(&address), if name.trim().is_empty() { "Phone" } else { &name }).await
+}
+
+/// Pairs with a desktop from the `addresses` and `code` it shows.
+#[tauri::command]
+async fn pair(state: State<'_, AppState>, addresses: Vec<String>, code: String, name: String) -> Result<Desktop, String> {
+    let addresses: Vec<String> = addresses.iter().map(|a| a.trim()).filter(|a| !a.is_empty()).map(with_port).collect();
+    if addresses.is_empty() {
+        return Err("Type the desktop's address. Open Settings, then Phone on the desktop to see it.".into());
+    }
+    if pairing::normalize_code(&code).len() != pairing::CODE_LEN {
+        return Err("The code has 8 characters.".into());
+    }
+    let name = if name.trim().is_empty() { "Phone".to_string() } else { name.trim().to_string() };
+    let p = client::pair(&addresses, &code, &name, &state.identity).await?;
+    let id = moonfish_remote::b64(&p.desktop_key);
+    // The address that answered goes first; the others stay for other networks.
+    let mut all = vec![p.address.clone()];
+    all.extend(addresses.into_iter().filter(|a| *a != p.address));
+    let desktop = Desktop {
+        id: id.clone(),
+        name: p.desktop_name,
+        addresses: all,
+        device_id: p.device_id,
+        paired_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0),
+        last_address: Some(p.address),
+        demo: false,
+    };
+    {
+        let mut s = state.saved.lock().unwrap();
+        s.desktops.retain(|d| d.id != id);
+        s.desktops.insert(0, desktop.clone());
+    }
+    state.save();
+    Ok(desktop)
+}
+
+/// Forgets a desktop (it still lists this phone until it's removed there too).
+#[tauri::command]
+fn forget(state: State<AppState>, id: String) {
+    if state.live.lock().unwrap().as_ref().is_some_and(|l| l.desktop_id == id) {
+        state.stop();
+    }
+    // Leaving the demo ends it.
+    state.demo.lock().unwrap().take_if(|d| d.desktop.id == id);
+    state.saved.lock().unwrap().desktops.retain(|d| d.id != id);
+    state.save();
+}
+
+/// Keeps a session with desktop `id` open, reconnecting when it drops, until `disconnect` or
+/// another `connect`. `on_event` gets `{kind: "state", state, error?, address?}` and
+/// `{kind: "push", push}`.
+#[tauri::command]
+fn connect(app: tauri::AppHandle, state: State<AppState>, id: String, on_event: Channel<Value>) -> Result<(), String> {
+    let desktop = state.desktop(&id).ok_or("That desktop isn't paired with this phone.")?;
+    state.stop();
+    let client: Arc<Mutex<Option<Arc<Client>>>> = Arc::new(Mutex::new(None));
+    let wake = Arc::new(Notify::new());
+    let watcher = alerts::Watcher::new(&app, state.saved.clone(), &desktop.id, &desktop.name, desktop.demo);
+    let (c, w, identity, alerts) = (client.clone(), wake.clone(), state.identity.clone(), watcher.clone());
+    let task = tauri::async_runtime::spawn(async move {
+        let key = moonfish_remote::key_from_b64(&desktop.id).unwrap_or_default();
+        let mut attempt = 0usize;
+        loop {
+            let _ = on_event.send(json!({ "kind": "state", "state": "connecting" }));
+            let mut addresses =
+                app.state::<AppState>().desktop(&desktop.id).map(|d| d.addresses).unwrap_or_else(|| desktop.addresses.clone());
+            if let Some(last) = app.state::<AppState>().desktop(&desktop.id).and_then(|d| d.last_address) {
+                addresses.retain(|a| *a != last);
+                addresses.insert(0, last);
+            }
+            // None of its addresses has answered for a while (a new Wi-Fi address, another
+            // port): look for it nearby too. It's safe to try whoever answers; only the desktop
+            // with this key can finish the handshake.
+            if attempt >= 2 {
+                if let Ok(found) = moonfish_remote::discovery::discover().await {
+                    for f in found {
+                        if !addresses.contains(&f.address) {
+                            addresses.push(f.address);
+                        }
+                    }
+                }
+            }
+            let (events, pushes) = (on_event.clone(), alerts.clone());
+            let why = match Client::connect(&addresses, &identity, &key, move |push| {
+                pushes.push(&push);
+                let _ = events.send(json!({ "kind": "push", "push": push }));
+            })
+            .await
+            {
+                Ok(session) => {
+                    attempt = 0;
+                    let session = Arc::new(session);
+                    remember_address(&app, &desktop.id, &session.address);
+                    *c.lock().unwrap() = Some(session.clone());
+                    alerts.poke();
+                    // Where the desktop is now, for next time.
+                    {
+                        let (app, id, session) = (app.clone(), desktop.id.clone(), session.clone());
+                        tauri::async_runtime::spawn(async move {
+                            if let Ok(hello) = session.call("hello", Value::Null).await {
+                                let now: Vec<String> = hello["addresses"]
+                                    .as_array()
+                                    .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                                    .unwrap_or_default();
+                                learn_addresses(&app, &id, &now);
+                            }
+                        });
+                    }
+                    let _ = on_event.send(
+                        json!({ "kind": "state", "state": "connected", "address": session.address, "desktopName": session.desktop_name }),
+                    );
+                    let why = session.closed().await;
+                    *c.lock().unwrap() = None;
+                    why
+                }
+                Err(e) => e,
+            };
+            // The desktop forgot this phone: trying again won't help.
+            if why.contains("isn't paired") || why.contains("different desktop key") {
+                alerts.reset();
+                let _ = on_event.send(json!({ "kind": "state", "state": "revoked", "error": why }));
+                return;
+            }
+            alerts.lost();
+            let _ = on_event.send(json!({ "kind": "state", "state": "offline", "error": why }));
+            let delay = BACKOFF[attempt.min(BACKOFF.len() - 1)];
+            attempt += 1;
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_millis(delay)) => {}
+                _ = w.notified() => attempt = 0,
+            }
+        }
+    });
+    let watch_task = tauri::async_runtime::spawn(watcher.clone().run(client.clone()));
+    *state.live.lock().unwrap() = Some(Live { desktop_id: id, client, wake, task, watcher, watch_task });
+    Ok(())
+}
+
+fn remember_address(app: &tauri::AppHandle, id: &str, address: &str) {
+    let state = app.state::<AppState>();
+    let changed = {
+        let mut s = state.saved.lock().unwrap();
+        match s.desktops.iter_mut().find(|d| d.id == id) {
+            Some(d) if d.last_address.as_deref() != Some(address) || !d.addresses.iter().any(|a| a == address) => {
+                d.last_address = Some(address.to_string());
+                if !d.addresses.iter().any(|a| a == address) {
+                    d.addresses.insert(0, address.to_string());
+                }
+                true
+            }
+            _ => false,
+        }
+    };
+    if changed {
+        state.save();
+    }
+}
+
+/// The desktop's addresses now (from its `hello`) go first in the list; old ones stay behind
+/// them (a VPN address can be the one that works away from home), up to a few.
+fn learn_addresses(app: &tauri::AppHandle, id: &str, now: &[String]) {
+    if now.is_empty() {
+        return;
+    }
+    let state = app.state::<AppState>();
+    let changed = {
+        let mut s = state.saved.lock().unwrap();
+        match s.desktops.iter_mut().find(|d| d.id == id) {
+            Some(d) => {
+                let mut next: Vec<String> = now.to_vec();
+                next.extend(d.addresses.iter().filter(|a| !now.contains(a)).cloned());
+                next.truncate(8);
+                let changed = next != d.addresses;
+                d.addresses = next;
+                changed
+            }
+            None => false,
+        }
+    };
+    if changed {
+        state.save();
+    }
+}
+
+#[tauri::command]
+fn disconnect(state: State<AppState>) {
+    state.stop();
+}
+
+/// The app came back to the foreground: a session that doesn't answer within a few seconds
+/// is dropped and opened again, and a wait between tries ends now.
+#[tauri::command]
+async fn wake(state: State<'_, AppState>) -> Result<(), String> {
+    let (client, wake) = match state.live.lock().unwrap().as_ref() {
+        Some(l) => (l.client.lock().unwrap().clone(), l.wake.clone()),
+        None => return Ok(()),
+    };
+    match client {
+        Some(c) => {
+            if !matches!(tokio::time::timeout(Duration::from_secs(3), c.call("hello", Value::Null)).await, Ok(Ok(_))) {
+                c.close("The connection timed out while the phone slept.");
+            }
+        }
+        None => wake.notify_one(),
+    }
+    Ok(())
+}
+
+/// Calls a method on the connected desktop.
+#[tauri::command]
+async fn rpc(state: State<'_, AppState>, method: String, params: Value) -> Result<Value, String> {
+    let client = state.live.lock().unwrap().as_ref().and_then(|l| l.client.lock().unwrap().clone());
+    let client = client.ok_or("Not connected to the desktop.")?;
+    client.call(&method, params).await
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(alerts::init())
+        .plugin(appearance::init())
+        .plugin(images::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            let dir = app.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("."));
+            app.manage(AppState::load(dir.join("desktops.json")));
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            appearance::phone_theme,
+            images::image_action,
+            desktops,
+            demo_start,
+            launch,
+            discover,
+            request_pairing,
+            pair,
+            forget,
+            connect,
+            disconnect,
+            wake,
+            rpc,
+            alerts::alerts_state,
+            alerts::alerts_set,
+            alerts::alerts_settings,
+            alerts::alerts_take_open,
+            alerts::alerts_seen
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running Moonfish");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn adds_the_default_port() {
+        assert_eq!(with_port("192.168.1.20"), "192.168.1.20:7787");
+        assert_eq!(with_port(" 192.168.1.20:9000 "), "192.168.1.20:9000");
+        assert_eq!(with_port("ws://pc.local:7787/"), "pc.local:7787");
+        assert_eq!(with_port("fe80::1"), "[fe80::1]:7787");
+        assert_eq!(with_port("[fe80::1]:80"), "[fe80::1]:80");
+    }
+
+    #[test]
+    fn keeps_its_key() {
+        let dir = std::env::temp_dir().join(format!("moonfish-phone-test-{}", std::process::id()));
+        let path = dir.join("desktops.json");
+        let a = AppState::load(path.clone());
+        let b = AppState::load(path);
+        assert_eq!(a.identity, b.identity);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}

@@ -1,0 +1,21 @@
+[package]
+name = "moonfish-agents"
+description = "Moonfish: drives agent CLIs (Claude Code, Codex, Antigravity) and turns their output into chat events"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+moonfish-core.workspace = true
+moonfish-transport.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ureq = { version = "3", features = ["json"] }
+base64 = "0.22"
+
+# Antigravity keeps its sign-in in Windows Credential Manager.
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[dev-dependencies]
+tempfile = "3"

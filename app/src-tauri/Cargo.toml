@@ -1,0 +1,47 @@
+[package]
+name = "moonfish-app"
+description = "Moonfish — desktop app for coding agents"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+default-run = "moonfish"
+
+[[bin]]
+name = "moonfish"
+path = "src/main.rs"
+
+[lib]
+name = "moonfish_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+moonfish-core.workspace = true
+moonfish-agents.workspace = true
+moonfish-git.workspace = true
+moonfish-transport.workspace = true
+moonfish-remote.workspace = true
+base64 = "0.22"
+gethostname = "1"
+if-addrs = "0.15"
+tokio = { version = "1", features = ["sync"] }
+uuid.workspace = true
+keyring = { version = "3", features = ["windows-native", "sync-secret-service", "crypto-rust"] }
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "2.12", features = ["image-png"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-window-state = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+tauri-plugin-single-instance = "2"
+
+[dev-dependencies]
+# An app with no window, for tests of what needs one's handle (chats.rs).
+tauri = { version = "2.12", features = ["test"] }
+tempfile = "3"

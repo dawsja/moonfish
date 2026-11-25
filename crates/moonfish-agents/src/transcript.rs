@@ -1,0 +1,213 @@
+//! A chat's log as short Markdown: what was asked, what the agent
+//! said, one line per tool, what was asked of the user and how it was answered.
+
+use std::fmt::Write;
+
+use crate::event::{ChatEvent, Decision};
+
+/// `events` are the chat's logged events (`events.jsonl` lines); lines this build can't read
+/// are skipped.
+pub fn render(events: &[serde_json::Value]) -> String {
+    let events: Vec<ChatEvent> = events.iter().filter_map(|v| serde_json::from_value(v.clone()).ok()).collect();
+    let mut out = String::new();
+    // Tool lines wait for their result; keyed by item id.
+    let mut tools: Vec<(String, String)> = Vec::new();
+    for e in &events {
+        match e {
+            ChatEvent::UserMessage { id, text, images, .. } => {
+                if id.starts_with(crate::goal::PROMPT_PREFIX) && !id.ends_with("-0") {
+                    continue;
+                }
+                let pics = match images.len() {
+                    0 => String::new(),
+                    1 => " _+1 image_".into(),
+                    n => format!(" _+{n} images_"),
+                };
+                let _ = write!(out, "\n## User\n{}{pics}\n\n## Agent\n", text.trim());
+            }
+            ChatEvent::Text { text, .. } | ChatEvent::TextDelta { text, .. } if !text.trim().is_empty() => {
+                let visible = text.lines().filter(|line| !crate::goal::is_marker(line)).collect::<Vec<_>>().join("\n");
+                if !visible.trim().is_empty() {
+                    let _ = writeln!(out, "{}\n", visible.trim());
+                }
+            }
+            ChatEvent::ToolStarted { item_id, tool } => {
+                let line = format!("{}: {}", tool.name, one_line(&tool.title, 200));
+                match tools.iter_mut().find(|t| &t.0 == item_id) {
+                    Some(t) => t.1 = line,
+                    None => tools.push((item_id.clone(), line)),
+                }
+            }
+            ChatEvent::ToolFinished { item_id, ok, output, diff } => {
+                let line = tools.iter().position(|t| &t.0 == item_id).map(|i| tools.remove(i).1).unwrap_or_else(|| "tool".into());
+                let stat = diff.as_ref().map(|d| format!(" (+{} −{})", d.added, d.removed)).unwrap_or_default();
+                let _ = writeln!(out, "- {} {line}{stat}", if *ok { "✓" } else { "✗" });
+                let output = output.trim();
+                if !output.is_empty() && !ok {
+                    out.push_str(&fenced(&cut(output, 600), "  "));
+                }
+            }
+            ChatEvent::Approval { request } => {
+                let detail = request.detail.as_deref().map(|d| format!(": `{}`", one_line(d, 200))).unwrap_or_default();
+                let _ = writeln!(out, "- Approval: {}{detail}", request.title);
+            }
+            ChatEvent::ApprovalResolved { decision, .. } => {
+                let d = match decision {
+                    Decision::Allow => "allowed",
+                    Decision::AllowAlways => "always allowed",
+                    Decision::Deny => "denied",
+                };
+                let _ = writeln!(out, "  - {d}");
+            }
+            ChatEvent::Question { request } => {
+                for q in &request.questions {
+                    let opts: Vec<&str> = q.options.iter().map(|o| o.label.as_str()).collect();
+                    let _ = writeln!(out, "- Question: {} [{}]", q.question, opts.join(" / "));
+                }
+            }
+            ChatEvent::QuestionResolved { answers, .. } => {
+                let a: Vec<String> = answers.values().map(|v| v.join(", ")).collect();
+                let _ = writeln!(out, "  - {}", if a.is_empty() { "skipped".into() } else { a.join("; ") });
+            }
+            ChatEvent::Plan { items } if !items.is_empty() => {
+                let done = items.iter().filter(|i| i.status == crate::event::PlanStatus::Completed).count();
+                let _ = writeln!(out, "- Plan: {done}/{} done", items.len());
+            }
+            ChatEvent::TurnFinished { usage, cost_usd, duration_ms, interrupted, .. } => {
+                let mut bits = vec![];
+                if *interrupted {
+                    bits.push("stopped".to_string());
+                }
+                if let Some(ms) = duration_ms {
+                    bits.push(format!("{:.1}s", *ms as f64 / 1000.0));
+                }
+                if let Some(u) = usage {
+                    bits.push(format!("{} tokens", u.fresh()));
+                    if u.cache_read_tokens > 0 {
+                        bits.push(format!("{} cached", u.cache_read_tokens));
+                    }
+                }
+                if let Some(c) = cost_usd.filter(|c| *c > 0.0) {
+                    bits.push(format!("${c:.3}"));
+                }
+                let _ = writeln!(out, "\n_Turn ended{}{}_", if bits.is_empty() { "" } else { ": " }, bits.join(", "));
+            }
+            ChatEvent::Notice { text, .. } => {
+                let _ = writeln!(out, "> {}\n", one_line(text, 400));
+            }
+            ChatEvent::Error { message } => {
+                let _ = writeln!(out, "> **Error:** {}\n", one_line(message, 400));
+            }
+            ChatEvent::Exited { code: Some(c), message } if *c != 0 => {
+                let _ = writeln!(
+                    out,
+                    "> **The agent exited with code {c}**{}\n",
+                    message.as_deref().map(|m| format!(": {m}")).unwrap_or_default()
+                );
+            }
+            _ => {}
+        }
+    }
+    // Tools still running (or cut off).
+    for (_, line) in tools {
+        let _ = writeln!(out, "- … {line}");
+    }
+    let out = out.trim().to_string();
+    if out.is_empty() {
+        "_Nothing yet._".into()
+    } else {
+        out
+    }
+}
+
+/// `text` as a code block indented by `indent` (so it stays inside a list item), fenced with
+/// more backticks than any run inside it.
+fn fenced(text: &str, indent: &str) -> String {
+    let mut longest = 0;
+    let mut run = 0;
+    for c in text.chars() {
+        run = if c == '`' { run + 1 } else { 0 };
+        longest = longest.max(run);
+    }
+    let fence = "`".repeat((longest + 1).max(3));
+    let mut out = format!("{indent}{fence}\n");
+    for line in text.lines() {
+        if line.is_empty() {
+            out.push('\n');
+        } else {
+            let _ = writeln!(out, "{indent}{line}");
+        }
+    }
+    let _ = writeln!(out, "{indent}{fence}");
+    out
+}
+
+pub(crate) fn one_line(s: &str, max: usize) -> String {
+    cut(&s.split_whitespace().collect::<Vec<_>>().join(" "), max)
+}
+
+/// The first `max` bytes (on a char boundary), with a note of how much was left out.
+pub(crate) fn cut(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_string();
+    }
+    let mut end = max;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}... {} more characters", &s[..end], s[end..].chars().count())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn log() -> Vec<serde_json::Value> {
+        vec![
+            json!({"type":"started","sessionId":"s","model":"m","cwd":"/p"}),
+            json!({"type":"userMessage","id":"1","text":"first","images":[],"files":[]}),
+            json!({"type":"text","itemId":"a","text":"Hi."}),
+            json!({"type":"turnFinished","turnId":"t1","usage":null,"costUsd":null,"durationMs":1000,"interrupted":false}),
+            json!({"type":"userMessage","id":"2","text":"run the tests","images":[],"files":[]}),
+            json!({"type":"toolStarted","itemId":"b","tool":{"kind":"bash","name":"Bash","title":"cargo test","input":{},"path":null}}),
+            json!({"type":"toolFinished","itemId":"b","ok":false,"output":"1 failed","diff":null}),
+            json!({"type":"approval","request":{"requestId":"r","itemId":null,"kind":"edit","title":"Edit src/a.rs","detail":null,"diff":null,"canRemember":true}}),
+            json!({"type":"approvalResolved","requestId":"r","decision":"allow"}),
+            json!({"type":"text","itemId":"c","text":"Fixed it."}),
+            json!({"type":"turnFinished","turnId":"t2","usage":null,"costUsd":0.02,"durationMs":2500,"interrupted":false}),
+            json!({"type":"somethingNew"}),
+        ]
+    }
+
+    #[test]
+    fn renders_the_chat() {
+        let md = render(&log());
+        assert!(md.starts_with("## User\nfirst"));
+        assert!(md.contains("## User\nrun the tests"));
+        assert!(md.contains("- ✗ Bash: cargo test\n  ```\n  1 failed\n  ```"));
+        assert!(md.contains("- Approval: Edit src/a.rs\n  - allowed"));
+        assert!(md.contains("Fixed it."));
+        assert!(md.ends_with("_Turn ended: 2.5s, $0.020_"));
+    }
+
+    #[test]
+    fn leaves_out_request_ids_for_people() {
+        let md = render(&log());
+        assert!(md.contains("- Approval: Edit src/a.rs\n  - allowed"));
+        assert!(!md.contains("request `"));
+        assert_eq!(render(&[]), "_Nothing yet._");
+    }
+
+    #[test]
+    fn fences_output_with_backticks_in_it() {
+        assert_eq!(fenced("a\n```\nb", "  "), "  ````\n  a\n  ```\n  b\n  ````\n");
+        assert_eq!(fenced("x\n\ny", ""), "```\nx\n\ny\n```\n");
+    }
+
+    #[test]
+    fn cuts_long_text() {
+        assert_eq!(cut("héllo", 2), "h... 4 more characters");
+        assert_eq!(one_line("a\n  b", 10), "a b");
+    }
+}

@@ -1,0 +1,143 @@
+export type AgentKind = "claude" | "codex" | "antigravity"
+export const AGENTS: AgentKind[] = ["claude", "codex", "antigravity"]
+export const AGENT_LABEL: Record<AgentKind, string> = {
+  claude: "Claude Code",
+  codex: "Codex",
+  antigravity: "Antigravity",
+}
+/** Driven over ACP (Antigravity): one prompt at a time. */
+export const isAcp = (k: AgentKind | undefined) => k === "antigravity"
+/** Labels for provider plan limits. */
+export const LIMIT_LABEL: Record<AgentKind, string> = {
+  claude: "Claude",
+  codex: "Codex",
+  antigravity: "Antigravity",
+}
+
+export type PermissionMode = "ask" | "acceptEdits" | "plan" | "fullAccess"
+export const PERMISSION_LABEL: Record<PermissionMode, string> = {
+  ask: "Ask",
+  acceptEdits: "Accept edits",
+  plan: "Plan only",
+  fullAccess: "Full access",
+}
+
+/** `value` is empty once it is saved in the OS keychain (`inKeychain`). */
+export type EnvVar = { key: string; value: string; inKeychain: boolean }
+
+export type Provider = {
+  enabled: boolean
+  binary: string
+  defaultModel: string
+  permissionMode: PermissionMode
+  env: EnvVar[]
+}
+
+export type Providers = { claude: Provider; codex: Provider; antigravity: Provider; defaultAgent: AgentKind }
+
+export type Theme = "system" | "dark" | "light"
+export type Appearance = {
+  theme: Theme
+  /** The window's zoom, as the base text size: 13 is 100%. */
+  uiFontSize: number
+  chatFontSize: number
+  sansFont: string
+  monoFont: string
+}
+
+/** The interface size that's 100% zoom. */
+export const BASE_UI_SIZE = 13
+
+export type SshHost = { host: string; port: number; identityFile: string; label: string }
+
+export type Location = { kind: "local" } | { kind: "ssh"; host: string } | { kind: "wsl"; distro: string }
+
+/** An installed WSL distro. */
+export type Distro = { name: string; default: boolean; running: boolean; version: number }
+
+/** The project's files are on another system (an SSH host, a WSL distro). */
+export const isRemote = (l: Location) => l.kind !== "local"
+
+/** `/mnt/c/Users/u` (a Windows drive as WSL mounts it) → `C:\Users\u`; null for Linux paths. */
+export function windowsPath(linux: string): string | null {
+  const m = /^\/mnt\/([a-z])(\/.*)?$/.exec(linux)
+  return m ? `${m[1].toUpperCase()}:\\${(m[2] ?? "").replace(/^\//, "").replace(/\//g, "\\")}` : null
+}
+
+export type ProjectGit = { baseBranch: string; worktreeDir: string; deleteBranchOnRemove: boolean }
+
+export type Project = {
+  id: string
+  name: string
+  location: Location
+  path: string
+  defaultAgent: AgentKind | null
+  defaultModel: string
+  git: ProjectGit
+}
+
+export type PairedDevice = { id: string; name: string; publicKey: string; pairedAt: number; lastSeen: number }
+/** Phones controlling this app. Changed only through `remote_*` commands, never `settings_set`. */
+export type Remote = { enabled: boolean; port: number; devices: PairedDevice[] }
+
+export type Settings = {
+  providers: Providers
+  appearance: Appearance
+  sshHosts: SshHost[]
+  projects: Project[]
+  agentSleepMinutes: number
+  remote: Remote
+}
+
+export type AppInfo = { version: string; platform: "windows" | "linux" | "macos" | "web"; dataDir: string; home: string; bundle: string | null; settingsProblem?: string | null }
+
+export function locationLabel(l: Location): string {
+  return l.kind === "local" ? "This computer" : l.kind === "ssh" ? l.host : l.distro
+}
+
+export type Probe = { found: boolean; path: string | null; version: string | null; error: string | null; outdated: string | null }
+
+export type Account = { signedIn: boolean; label: string | null; plan: string | null; error: string | null }
+export type LoginMethod = "auto" | "device" | "browser"
+export type LoginPromptKind = "code" | "device" | "browser"
+export type LoginStart = {
+  sessionId: string
+  agent: AgentKind
+  location: Location
+  kind: LoginPromptKind
+  url: string
+  userCode?: string | null
+  autoOpened: boolean
+  inputLabel?: string | null
+  hint?: string | null
+  canSwitchToDevice?: boolean
+  canSwitchToBrowser?: boolean
+}
+export type LoginEvent =
+  | { sessionId: string; kind: "feedback"; message: string }
+  | { sessionId: string; kind: "done"; account: Account }
+  | { sessionId: string; kind: "error"; message: string }
+
+export type LimitWindow = { label: string; usedPercent: number; resetsAt: number | null }
+/** `extra`: rows that aren't windows (a balance; `value` null when unavailable, `note` says why). */
+export type LimitExtra = { label: string; value: string | null; note: string | null }
+/** `missing`: the agent's CLI isn't installed where these were asked for. */
+export type Limits = {
+  windows: LimitWindow[]
+  error: string | null
+  extra: LimitExtra[]
+  missing?: boolean
+  accountEmail?: string | null
+  accountPlan?: string | null
+}
+export type AccountUsage = {
+  agent: AgentKind
+  email?: string | null
+  plan?: string | null
+  locations: string[]
+  limits: Limits
+}
+
+/** `windows`: not installed there, but a Windows copy is on WSL's PATH (where). */
+export type Tool = { path: string | null; version: string | null; windows: string | null }
+export type HostCheck = { ok: boolean; error: string | null; home: string | null; os: string | null; git: Tool; gh: Tool; claude: Tool; codex: Tool; antigravity: Tool }

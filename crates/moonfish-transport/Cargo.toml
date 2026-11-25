@@ -1,0 +1,20 @@
+[package]
+name = "moonfish-transport"
+description = "Moonfish: runs a program in a folder on this computer, on an SSH host or in a WSL distro"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+moonfish-core.workspace = true
+moonfish-host.workspace = true
+uuid.workspace = true
+serde.workspace = true
+which = "8"
+
+# Stopping what a program started too (its process group).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"

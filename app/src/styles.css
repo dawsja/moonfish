@@ -1,0 +1,276 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark, .dark *));
+
+:root {
+  --radius: 12px;
+
+  --background: #f6f7f9;
+  --foreground: #16181d;
+  --card: #ffffff;
+  --card-foreground: #16181d;
+  --popover: #ffffff;
+  --popover-foreground: #16181d;
+  --primary: #f5b800;
+  --primary-foreground: #16181d;
+  --secondary: #eef0f3;
+  --secondary-foreground: #2a2e37;
+  --muted: #eef0f3;
+  --muted-foreground: #5b6170;
+  --accent: rgb(15 23 42 / 5%);
+  --accent-foreground: #16181d;
+  --destructive: #dc2626;
+  --border: #e1e4e9;
+  --input: #d2d6dd;
+  --ring: #7c828f; /* focus: a gray, not gold; 3:1 or more on every surface */
+
+  --sidebar: #eef0f3;
+  --sidebar-foreground: #16181d;
+  --sidebar-primary: #f5b800;
+  --sidebar-primary-foreground: #16181d;
+  --sidebar-accent: #ffffff; /* selected row: white on the gray sidebar */
+  --sidebar-accent-foreground: #16181d;
+  --sidebar-border: #e1e4e9;
+  --sidebar-ring: #bfc4cd;
+
+  --moonfish-deep: #eef0f3;
+  --moonfish-faint: #6f7585;
+  --moonfish-brand: #16181d;
+  --moonfish-gold: #f5b800;
+  --moonfish-cyan: #1d4ed8;
+  --moonfish-green: #047857;
+  --moonfish-red: #b91c1c;
+  --moonfish-yellow: #b45309;
+  --moonfish-orange: #c2410c;
+  --moonfish-code: #16181d;
+  --moonfish-add-bg: color-mix(in srgb, #10b981 10%, transparent);
+  --moonfish-del-bg: color-mix(in srgb, #ef4444 9%, transparent);
+  --moonfish-user: #e9ebef;
+  --moonfish-code-bg: rgb(15 23 42 / 6%);
+  --moonfish-pre-fg: #16181d;
+  --moonfish-scroll: rgb(15 23 42 / 14%);
+  --moonfish-scroll-hover: rgb(15 23 42 / 24%);
+  --moonfish-selection: rgb(245 184 0 / 30%);
+  color-scheme: light;
+}
+
+.dark {
+  --background: #0c0c0c;
+  --foreground: #ededed;
+  --card: #151515;
+  --card-foreground: #ededed;
+  --popover: #151515;
+  --popover-foreground: #ededed;
+  --primary: #f5b800;
+  --primary-foreground: #0c0c0c;
+  --secondary: rgb(255 255 255 / 4%);
+  --secondary-foreground: #ededed;
+  --muted: rgb(255 255 255 / 4%);
+  --muted-foreground: #a1a1a1;
+  --accent: rgb(255 255 255 / 6%);
+  --accent-foreground: #ededed;
+  --destructive: #f87171;
+  --border: rgb(255 255 255 / 8%);
+  --input: rgb(255 255 255 / 12%);
+  --ring: rgb(255 255 255 / 45%); /* focus: a gray, not gold; 3:1 or more on every surface */
+
+  --sidebar: #080808;
+  --sidebar-foreground: #ededed;
+  --sidebar-primary: #f5b800;
+  --sidebar-primary-foreground: #0c0c0c;
+  --sidebar-accent: rgb(255 255 255 / 6%);
+  --sidebar-accent-foreground: #ededed;
+  --sidebar-border: rgb(255 255 255 / 8%);
+  --sidebar-ring: rgb(255 255 255 / 22%);
+
+  --moonfish-deep: #080808;
+  --moonfish-faint: #858585;
+  --moonfish-brand: #ededed;
+  --moonfish-gold: #f5b800;
+  --moonfish-cyan: #60a5fa;
+  --moonfish-green: #4ade80;
+  --moonfish-red: #f87171;
+  --moonfish-yellow: #fbbf24;
+  --moonfish-orange: #fb923c;
+  --moonfish-code: #ededed;
+  --moonfish-add-bg: color-mix(in srgb, #10b981 14%, transparent);
+  --moonfish-del-bg: color-mix(in srgb, #ef4444 14%, transparent);
+  --moonfish-user: #222222;
+  --moonfish-code-bg: rgb(255 255 255 / 7%);
+  --moonfish-pre-fg: #e3e3e3;
+  --moonfish-scroll: rgb(255 255 255 / 9%);
+  --moonfish-scroll-hover: rgb(255 255 255 / 14%);
+  --moonfish-selection: rgb(245 184 0 / 24%);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --font-sans: var(--moonfish-sans, "Inter Variable"), Inter, system-ui, "Segoe UI", sans-serif;
+  --font-mono: var(--moonfish-mono, "JetBrains Mono Variable"), "JetBrains Mono", ui-monospace, Consolas, monospace;
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 9px;
+  --radius-lg: var(--radius);
+  --radius-xl: 16px;
+  --radius-2xl: 22px;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-deep: var(--moonfish-deep);
+  --color-faint: var(--moonfish-faint);
+  --color-brand: var(--moonfish-brand);
+  --color-gold: var(--moonfish-gold);
+  --color-cyan: var(--moonfish-cyan);
+  --color-green: var(--moonfish-green);
+  --color-red: var(--moonfish-red);
+  --color-warn: var(--moonfish-yellow);
+  --color-orange: var(--moonfish-orange);
+  --color-code: var(--moonfish-code);
+  --color-add: var(--moonfish-add-bg);
+  --color-del: var(--moonfish-del-bg);
+  --color-user: var(--moonfish-user);
+
+  --animate-shimmer: shimmer 1.6s linear infinite;
+  @keyframes shimmer {
+    from { background-position: 100% 0; }
+    to { background-position: -100% 0; }
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring;
+  }
+  html, body, #root {
+    @apply h-full overflow-clip;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased select-none cursor-default;
+    font-size: 13px;
+  }
+  ::selection { background: var(--moonfish-selection); }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--moonfish-scroll); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--moonfish-scroll-hover); }
+  ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+}
+
+@layer components {
+  /* Text that sweeps while something is in progress. */
+  .shimmer {
+    background: linear-gradient(90deg, var(--muted-foreground) 0%, var(--muted-foreground) 40%, var(--foreground) 50%, var(--muted-foreground) 60%, var(--muted-foreground) 100%);
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: var(--animate-shimmer);
+  }
+
+  /* The Spinner: a quarter arc turning steadily on its track. */
+  .moonfish-spinner { animation: moonfish-turn 0.8s linear infinite; }
+  @keyframes moonfish-turn { to { transform: rotate(360deg); } }
+
+  /* A selected row: a soft fill and a short gold bar on the left. */
+  .row-active { position: relative; background: var(--sidebar-accent); color: var(--foreground); }
+  .row-active::before { content: ""; position: absolute; inset: 9px auto 9px 4px; width: 2px; border-radius: 2px; background: var(--primary); }
+
+  /* Diffs and tool output. */
+  .diff { font: 12px/1.65 var(--font-mono); user-select: text; cursor: text; }
+  .diff > div { white-space: pre; padding: 0 12px; color: var(--muted-foreground); min-width: max-content; }
+  .diff > .a { background: var(--moonfish-add-bg); color: var(--moonfish-green); }
+  .diff > .d { background: var(--moonfish-del-bg); color: var(--moonfish-red); }
+  .diff > .h { color: var(--moonfish-cyan); }
+  .diff > .e { color: var(--moonfish-faint); }
+
+  /* The agent's markdown. */
+  .md { overflow-wrap: anywhere; user-select: text; cursor: auto; line-height: 1.65; font-size: var(--moonfish-chat-size, 14px); }
+  .md > :first-child { margin-top: 0; }
+  .md > :last-child { margin-bottom: 0; }
+  .md p { margin: 0 0 10px; }
+  .md h1, .md h2, .md h3, .md h4 { color: var(--foreground); margin: 18px 0 8px; line-height: 1.3; font-weight: 650; }
+  .md h1 { font-size: 1.4em; }
+  .md h2 { font-size: 1.2em; }
+  .md h3, .md h4 { font-size: 1.05em; }
+  .md strong { color: var(--foreground); font-weight: 650; }
+  .md a { color: var(--moonfish-cyan); text-decoration: underline; text-underline-offset: 2px; }
+  .md ul, .md ol { margin: 0 0 10px; padding-left: 22px; }
+  .md ul { list-style: square; }
+  .md ol { list-style: decimal; }
+  .md li { margin: 3px 0; }
+  .md li::marker { color: var(--muted-foreground); }
+  .md blockquote { margin: 0 0 10px; padding-left: 12px; border-left: 2px solid var(--border); color: var(--muted-foreground); }
+  .md code { font: 0.9em var(--font-mono); color: var(--moonfish-code); background: var(--moonfish-code-bg); padding: 1px 5px; border-radius: 4px; }
+  .md pre { margin: 0 0 12px; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 12px 14px; overflow: auto; }
+  .md pre code { background: transparent; padding: 0; color: var(--moonfish-pre-fg); font-size: 12px; line-height: 1.65; }
+  .md table { border-collapse: collapse; margin: 0 0 12px; font-size: 0.92em; display: block; overflow-x: auto; }
+  /* Cells keep words whole (the table scrolls sideways instead of breaking "Step" into "St/ep"). */
+  .md th, .md td { border: 1px solid var(--border); padding: 5px 10px; text-align: left; overflow-wrap: normal; word-break: normal; }
+  .md th, .md :is(th, td) code { white-space: nowrap; }
+  .md th { background: var(--muted); }
+  .md hr { border: 0; border-top: 1px solid var(--border); margin: 16px 0; }
+
+  /* Code colors, toned down; no yellow (that's the accent). */
+  .hljs-keyword, .hljs-selector-tag, .hljs-built_in { color: #c4a7e7; }
+  .hljs-string, .hljs-attr-value, .hljs-template-string { color: #a9d6a0; }
+  .hljs-comment, .hljs-quote { color: var(--moonfish-faint); font-style: italic; }
+  .hljs-number, .hljs-literal, .hljs-meta, .hljs-symbol { color: #f2a97a; }
+  .hljs-title, .hljs-title.function_, .hljs-function, .hljs-section, .hljs-name { color: #8ab4f8; }
+  .hljs-type, .hljs-title.class_ { color: #9fd4c8; }
+  .hljs-attr, .hljs-property, .hljs-attribute { color: #8cc8e0; }
+  :root:not(.dark) .hljs-keyword, :root:not(.dark) .hljs-built_in { color: #8250df; }
+  :root:not(.dark) .hljs-string { color: #0a6b3d; }
+  :root:not(.dark) .hljs-number, :root:not(.dark) .hljs-literal { color: #b54708; }
+  :root:not(.dark) .hljs-title, :root:not(.dark) .hljs-function { color: #0550ae; }
+  :root:not(.dark) .hljs-type { color: #0f766e; }
+  :root:not(.dark) .hljs-attr, :root:not(.dark) .hljs-property { color: #0b7fc4; }
+}
+
+/* Behind images, so transparent ones read as transparent. */
+.checkerboard {
+  background-color: var(--background);
+  background-image:
+    linear-gradient(45deg, var(--muted) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--muted) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--muted) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--muted) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+
+/* Less movement for people who ask their system for it. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

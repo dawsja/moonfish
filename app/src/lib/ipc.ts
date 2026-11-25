@@ -1,7 +1,7 @@
 // The commands the Rust side exposes (app/src-tauri/src/lib.rs).
 
 import type { GoalAction } from "./goals"
-import type { ChatEvent, ChatMeta, Decision, ModelOption, QueueAction, SearchHit, SendMode, SlashCommand, Snapshot, Waiting } from "./chat"
+import type { ChatEvent, ChatMeta, Decision, ModelOption, QueueAction, SearchHit, SendMode, SlashCommand, Snapshot, SubagentSnapshot, Waiting } from "./chat"
 import type { Account, AgentKind, AppInfo, Distro, HostCheck, Limits, Location, LoginEvent, LoginMethod, LoginStart, PermissionMode, Probe, Project, Settings } from "./types"
 
 /** An agent's models and slash commands, for a chat that hasn't started. */
@@ -42,6 +42,10 @@ export const ipc = {
   chatBusy: () => call<string[]>("chat_busy"),
   chatsStopAll: () => call<void>("chats_stop_all"),
   chatStopTask: (chatId: string, taskId: string) => call<void>("chat_stop_task", { chatId, taskId }),
+  chatSubagentSnapshot: (chatId: string, taskId: string) => call<SubagentSnapshot>("chat_subagent_snapshot", { chatId, taskId }),
+  chatSubagentSend: (chatId: string, taskId: string, prompt: { id: string; text: string; images: { mime: string; data: string }[] }) =>
+    call<void>("chat_subagent_send", { chatId, taskId, prompt }),
+  chatSubagentInterrupt: (chatId: string, taskId: string) => call<void>("chat_subagent_interrupt", { chatId, taskId }),
   /** Chats whose text has every word of `query`, newest first. */
   chatSearch: (query: string) => call<SearchHit[]>("chat_search", { query }),
   /** The chat as Markdown, for an issue or a PR description. */
@@ -78,6 +82,13 @@ export const ipc = {
 export async function onChatEvent(fn: (chatId: string, event: ChatEvent, seq: number) => void): Promise<() => void> {
   const { listen } = await import("@tauri-apps/api/event")
   return listen<{ chatId: string; event: ChatEvent; seq: number }>("chat-event", (e) => fn(e.payload.chatId, e.payload.event, e.payload.seq))
+}
+
+export async function onSubagentEvent(fn: (chatId: string, taskId: string, event: ChatEvent, seq: number) => void): Promise<() => void> {
+  const { listen } = await import("@tauri-apps/api/event")
+  return listen<{ chatId: string; taskId: string; event: ChatEvent; seq: number }>("subagent-event", (e) =>
+    fn(e.payload.chatId, e.payload.taskId, e.payload.event, e.payload.seq),
+  )
 }
 
 /** Calls `fn` when chats were added, renamed or removed from a phone, or a turn started or ended. */

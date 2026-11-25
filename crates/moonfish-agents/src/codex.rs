@@ -78,6 +78,7 @@ struct State {
     open: HashMap<String, BackgroundTask>,
     /// Subagents' thread ids: their notifications feed their task, not this chat.
     agents: std::collections::HashSet<String>,
+    agent_turns: HashMap<String, String>,
 }
 
 impl State {
@@ -446,6 +447,56 @@ impl Driver for CodexDriver {
         Ok(true)
     }
 
+    fn send_subagent(&mut self, task_id: &str, prompt: Prompt) -> DriverResult<()> {
+        let (turn_id, tasks_event) = {
+            let mut st = self.state.lock().unwrap();
+            if !st.alive {
+                return Err("Codex isn't running".into());
+            }
+            if !st.agents.contains(task_id) {
+                return Err("This subagent cannot be messaged directly.".into());
+            }
+            let turn_id = st.agent_turns.get(task_id).cloned();
+            let ev = st.tasks.reopen(task_id).then(|| st.tasks.event());
+            (turn_id, ev)
+        };
+        let mut input = vec![json!({"type": "text", "text": prompt.text, "text_elements": []})];
+        for img in &prompt.images {
+            input.push(json!({"type": "image", "url": format!("data:{};base64,{}", img.mime, img.data)}));
+        }
+        (self.sink)(ChatEvent::SubagentEvent {
+            task_id: task_id.to_string(),
+            event: Box::new(ChatEvent::UserMessage {
+                id: prompt.id,
+                text: prompt.text,
+                images: prompt.images.iter().map(|i| i.mime.clone()).collect(),
+                files: prompt.files,
+            }),
+        });
+        if let Some(e) = tasks_event {
+            (self.sink)(e);
+        }
+        if let Some(tid) = turn_id {
+            let steer = json!({"threadId": task_id, "expectedTurnId": tid, "input": input});
+            if self.rpc.call("turn/steer", steer, Duration::from_secs(60)).is_ok() {
+                return Ok(());
+            }
+        }
+        let (approval, _) = policy(self.permission);
+        let params = json!({"threadId": task_id, "input": input, "approvalPolicy": approval});
+        self.rpc.call("turn/start", params, Duration::from_secs(120)).map(|_| ())
+    }
+
+    fn interrupt_subagent(&mut self, task_id: &str) -> DriverResult<()> {
+        let Some(turn_id) = self.state.lock().unwrap().agent_turns.get(task_id).cloned() else { return Ok(()) };
+        let rpc = self.rpc.clone();
+        let thread_id = task_id.to_string();
+        thread::spawn(move || {
+            let _ = rpc.call("turn/interrupt", json!({"threadId": thread_id, "turnId": turn_id}), Duration::from_secs(30));
+        });
+        Ok(())
+    }
+
     fn stop(&mut self) {
         self.rpc.stdin.lock().unwrap().take();
         // Stdin closed: it may exit by itself (saving its session); then it and everything it
@@ -767,6 +818,7 @@ impl Translator {
     /// subagents inside the current turn and tracks their live status.
     fn collab(&mut self, item: &Value, done: bool) {
         let mut ended = Vec::new();
+        let mut sub_events: Vec<(String, ChatEvent)> = Vec::new();
         let event = {
             let mut st = self.state.lock().unwrap();
             let mut changed = false;
@@ -775,21 +827,47 @@ impl Translator {
             if matches!(tool, "spawnAgent" | "spawn_agent") {
                 let title = collab_title(item);
                 let bg = st.turn_id.is_none();
+                let init_prompt = item["prompt"].as_str().map(str::trim).filter(|p| !p.is_empty()).map(String::from);
                 for &thread in &receivers {
-                    st.agents.insert(thread.to_string());
+                    let is_new = st.agents.insert(thread.to_string());
                     let mut t = if bg {
                         BackgroundTask::running(thread, TaskKind::Agent, title.clone())
                     } else {
                         BackgroundTask::in_turn(thread, TaskKind::Agent, title.clone())
                     };
                     t.item_id = item["id"].as_str().map(String::from);
+                    t.session_id = Some(thread.to_string());
+                    t.interactive = true;
                     changed |= st.tasks.add(t);
+                    if is_new {
+                        if let Some(text) = &init_prompt {
+                            sub_events.push((
+                                thread.to_string(),
+                                ChatEvent::UserMessage { id: format!("{thread}:init"), text: text.clone(), images: vec![], files: vec![] },
+                            ));
+                        }
+                        sub_events.push((thread.to_string(), ChatEvent::TurnStarted { turn_id: format!("sub-{thread}") }));
+                    }
                 }
             } else if matches!(tool, "sendInput" | "send_input") {
-                let msg = item["prompt"].as_str().or_else(|| item["message"].as_str()).map(first_line).filter(|m| !m.is_empty());
-                if let Some(msg) = msg {
+                let raw_msg = item["prompt"].as_str().or_else(|| item["message"].as_str()).map(str::trim).filter(|m| !m.is_empty());
+                if let Some(raw_msg) = raw_msg {
+                    let line = first_line(raw_msg);
                     for &thread in &receivers {
-                        changed |= st.tasks.progress(thread, None, Some(&msg));
+                        if !line.is_empty() {
+                            changed |= st.tasks.progress(thread, None, Some(&line));
+                        }
+                        if done {
+                            sub_events.push((
+                                thread.to_string(),
+                                ChatEvent::UserMessage {
+                                    id: format!("{}:in", s(&item["id"])),
+                                    text: raw_msg.to_string(),
+                                    images: vec![],
+                                    files: vec![],
+                                },
+                            ));
+                        }
                     }
                 }
             }
@@ -829,6 +907,9 @@ impl Translator {
             }
             changed.then(|| st.tasks.event())
         };
+        for (task_id, ev) in sub_events {
+            self.emit(ChatEvent::SubagentEvent { task_id, event: Box::new(ev) });
+        }
         if let Some(e) = event {
             self.emit(e);
         }
@@ -837,24 +918,155 @@ impl Translator {
         }
     }
 
-    /// A notification from a subagent's thread: progress for its task.
+    /// A notification from a subagent's thread: progress for its task and events for its thread view.
     fn subagent(&mut self, thread: &str, method: &str, p: &Value) {
         let mut ended = None;
+        let mut sub_ev: Option<ChatEvent> = None;
         let event = {
             let mut st = self.state.lock().unwrap();
             let changed = match method {
-                "item/completed" if p["item"]["type"] == "agentMessage" => {
-                    st.tasks.progress(thread, None, p["item"]["text"].as_str().map(first_line).as_deref())
+                "turn/started" => {
+                    let tid = s(&p["turn"]["id"]);
+                    st.agent_turns.insert(thread.to_string(), tid.clone());
+                    sub_ev = Some(ChatEvent::TurnStarted { turn_id: tid });
+                    st.tasks.reopen(thread)
                 }
-                "item/started" if p["item"]["type"] == "commandExecution" => {
-                    st.tasks.progress(thread, None, Some(&format!("Running {}", strip_shell(&s(&p["item"]["command"])))))
+                "item/agentMessage/delta" => {
+                    sub_ev = Some(ChatEvent::TextDelta { item_id: s(&p["itemId"]), text: s(&p["delta"]) });
+                    false
+                }
+                "item/reasoning/summaryTextDelta" | "item/reasoning/textDelta" => {
+                    sub_ev = Some(ChatEvent::ReasoningDelta { item_id: s(&p["itemId"]), text: s(&p["delta"]) });
+                    false
+                }
+                "item/started" => {
+                    let item = &p["item"];
+                    let id = s(&item["id"]);
+                    match item["type"].as_str().unwrap_or("") {
+                        "commandExecution" => {
+                            let command = s(&item["command"]);
+                            let title = strip_shell(&command);
+                            sub_ev = Some(ChatEvent::ToolStarted {
+                                item_id: id,
+                                tool: ToolCall {
+                                    kind: command_kind(item),
+                                    name: "shell".into(),
+                                    title: title.clone(),
+                                    input: json!({"command": command}),
+                                    path: None,
+                                },
+                            });
+                            st.tasks.progress(thread, None, Some(&format!("Running {title}")))
+                        }
+                        "fileChange" => {
+                            let diffs: Vec<FileDiff> = item["changes"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .map(|c| FileDiff::from_patch(s(&c["path"]), s(&c["diff"])))
+                                .collect();
+                            let title = diffs.iter().map(|d| d.path.clone()).collect::<Vec<_>>().join(", ");
+                            let path = diffs.first().map(|d| d.path.clone());
+                            let kind = if item["changes"][0]["kind"]["type"] == "add" { ToolKind::Write } else { ToolKind::Edit };
+                            sub_ev = Some(ChatEvent::ToolStarted {
+                                item_id: id,
+                                tool: ToolCall { kind, name: "apply_patch".into(), title: title.clone(), input: item["changes"].clone(), path },
+                            });
+                            st.tasks.progress(thread, None, Some(&format!("Editing {title}")))
+                        }
+                        "dynamicToolCall" | "mcpToolCall" => {
+                            let name = item["tool"].as_str().or(item["name"].as_str()).unwrap_or("tool").to_string();
+                            let title = format!("{}{}", item["server"].as_str().map(|s| format!("{s} · ")).unwrap_or_default(), name);
+                            sub_ev = Some(ChatEvent::ToolStarted {
+                                item_id: id,
+                                tool: ToolCall { kind: ToolKind::Other, name, title: title.clone(), input: item["arguments"].clone(), path: None },
+                            });
+                            st.tasks.progress(thread, None, Some(&title))
+                        }
+                        "webSearch" => {
+                            let query = s(&item["query"]);
+                            sub_ev = Some(ChatEvent::ToolStarted {
+                                item_id: id,
+                                tool: ToolCall { kind: ToolKind::Web, name: "web_search".into(), title: query.clone(), input: item.clone(), path: None },
+                            });
+                            st.tasks.progress(thread, None, Some(&format!("Searching {query}")))
+                        }
+                        _ => false,
+                    }
+                }
+                "item/completed" => {
+                    let item = &p["item"];
+                    let id = s(&item["id"]);
+                    match item["type"].as_str().unwrap_or("") {
+                        "agentMessage" => {
+                            let text = s(&item["text"]);
+                            let line = first_line(&text);
+                            sub_ev = Some(ChatEvent::Text { item_id: id, text });
+                            st.tasks.progress(thread, None, (!line.is_empty()).then_some(line.as_str()))
+                        }
+                        "reasoning" => {
+                            let parts: Vec<String> = item["summary"]
+                                .as_array()
+                                .or(item["content"].as_array())
+                                .into_iter()
+                                .flatten()
+                                .filter_map(|x| x.as_str().map(String::from))
+                                .collect();
+                            if !parts.is_empty() {
+                                sub_ev = Some(ChatEvent::Reasoning { item_id: id, text: parts.join("\n\n") });
+                            }
+                            false
+                        }
+                        "commandExecution" => {
+                            let ok = item["status"] == "completed" && item["exitCode"].as_i64().unwrap_or(0) == 0;
+                            sub_ev = Some(ChatEvent::ToolFinished { item_id: id, ok, output: clip(s(&item["aggregatedOutput"])), diff: None });
+                            false
+                        }
+                        "fileChange" => {
+                            let diffs: Vec<FileDiff> = item["changes"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .map(|c| FileDiff::from_patch(s(&c["path"]), s(&c["diff"])))
+                                .collect();
+                            let ok = item["status"] == "completed";
+                            sub_ev = Some(ChatEvent::ToolFinished { item_id: id, ok, output: String::new(), diff: merge(diffs) });
+                            false
+                        }
+                        "dynamicToolCall" | "mcpToolCall" => {
+                            let ok = item["status"] != "failed" && item["error"].is_null();
+                            let text = item["result"]["content"]
+                                .as_array()
+                                .map(|parts| parts.iter().filter_map(|p| p["text"].as_str()).collect::<Vec<_>>().join("\n"));
+                            let output = match (ok, text) {
+                                (true, Some(t)) if !t.is_empty() => clip(t),
+                                (true, _) => clip(item["result"].to_string()),
+                                (false, _) => s(&item["error"]["message"]),
+                            };
+                            sub_ev = Some(ChatEvent::ToolFinished { item_id: id, ok, output, diff: None });
+                            false
+                        }
+                        "webSearch" => {
+                            sub_ev = Some(ChatEvent::ToolFinished { item_id: id, ok: true, output: String::new(), diff: None });
+                            false
+                        }
+                        _ => false,
+                    }
                 }
                 "turn/completed" => {
+                    st.agent_turns.remove(thread);
                     let status = match p["turn"]["status"].as_str() {
                         Some("failed") => TaskStatus::Failed,
                         Some("interrupted") => TaskStatus::Stopped,
                         _ => TaskStatus::Completed,
                     };
+                    sub_ev = Some(ChatEvent::TurnFinished {
+                        turn_id: s(&p["turn"]["id"]),
+                        usage: None,
+                        cost_usd: None,
+                        duration_ms: p["turn"]["durationMs"].as_u64(),
+                        interrupted: status == TaskStatus::Stopped,
+                    });
                     match st.tasks.finish(thread, status, None) {
                         Some(t) => {
                             if t.background {
@@ -869,6 +1081,9 @@ impl Translator {
             };
             changed.then(|| st.tasks.event())
         };
+        if let Some(ev) = sub_ev {
+            self.emit(ChatEvent::SubagentEvent { task_id: thread.to_string(), event: Box::new(ev) });
+        }
         if let Some(e) = event {
             self.emit(e);
         }

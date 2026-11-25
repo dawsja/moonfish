@@ -97,6 +97,14 @@ pub trait Driver: Send {
     fn stop_task(&mut self, _task_id: &str) -> DriverResult<()> {
         Err("this agent can't stop its background work from Moonfish".into())
     }
+    /// Sends a message directly to a subagent task (see [`crate::event::BackgroundTask::interactive`]).
+    fn send_subagent(&mut self, _task_id: &str, _prompt: Prompt) -> DriverResult<()> {
+        Err("this agent doesn't support talking to subagents directly".into())
+    }
+    /// Interrupts a running subagent turn.
+    fn interrupt_subagent(&mut self, task_id: &str) -> DriverResult<()> {
+        self.stop_task(task_id)
+    }
     /// How many background tasks are running: the CLI is busy even between turns, so it isn't
     /// put to sleep or restarted under them.
     fn background(&self) -> usize {

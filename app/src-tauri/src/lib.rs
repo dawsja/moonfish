@@ -429,6 +429,28 @@ async fn chat_stop_task(app: AppHandle, chat_id: String, task_id: String) -> Cmd
     off_main(app, move |_, state| state.chats.stop_task(&chat_id, &task_id)).await?
 }
 
+#[tauri::command]
+async fn chat_subagent_snapshot(app: AppHandle, chat_id: String, task_id: String) -> chats::SubagentSnapshot {
+    off_main(app, move |_, state| state.chats.subagent_snapshot(&chat_id, &task_id))
+        .await
+        .unwrap_or(chats::SubagentSnapshot { events: Vec::new(), seq: 0, busy: false })
+}
+
+#[tauri::command]
+async fn chat_subagent_send(app: AppHandle, chat_id: String, task_id: String, prompt: Prompt) -> CmdResult<()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        state.chats.send_subagent(&chat_id, &task_id, prompt)
+    })
+    .await
+    .map_err(err)?
+}
+
+#[tauri::command]
+async fn chat_subagent_interrupt(app: AppHandle, chat_id: String, task_id: String) -> CmdResult<()> {
+    off_main(app, move |_, state| state.chats.interrupt_subagent(&chat_id, &task_id)).await?
+}
+
 /// Chats whose text has every word of `query`, newest first.
 #[tauri::command]
 async fn chat_search(app: AppHandle, query: String) -> CmdResult<Vec<moonfish_agents::search::Hit>> {
@@ -731,6 +753,9 @@ pub fn run() {
             chat_busy,
             chats_stop_all,
             chat_stop_task,
+            chat_subagent_snapshot,
+            chat_subagent_send,
+            chat_subagent_interrupt,
             chat_search,
             chat_markdown,
             attention::app_set_badge,

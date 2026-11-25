@@ -198,9 +198,7 @@
   .moonfish-spinner { animation: moonfish-turn 0.8s linear infinite; }
   @keyframes moonfish-turn { to { transform: rotate(360deg); } }
 
-  /* A selected row: a soft fill and a short gold bar on the left. */
-  .row-active { position: relative; background: var(--sidebar-accent); color: var(--foreground); }
-  .row-active::before { content: ""; position: absolute; inset: 9px auto 9px 4px; width: 2px; border-radius: 2px; background: var(--primary); }
+  .row-active { background: var(--sidebar-accent); color: var(--foreground); }
 
   /* Diffs and tool output. */
   .diff { font: 12px/1.65 var(--font-mono); user-select: text; cursor: text; }

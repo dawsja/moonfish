@@ -17,6 +17,8 @@ export type SubagentItem = {
   stoppable: boolean
   tracked: boolean
   background: boolean
+  sessionId?: string
+  interactive: boolean
 }
 
 const ROLE_KEYS = ["Role", "role", "subagent_type", "subagentType", "TypeName", "typeName", "agent_type", "agentType", "name", "Name"] as const
@@ -124,6 +126,8 @@ export function extractSubagents(transcript: Transcript): SubagentItem[] {
         stoppable: task.stoppable,
         tracked: task.tracked,
         background: task.background ?? true,
+        sessionId: task.sessionId ?? undefined,
+        interactive: !!task.interactive,
       },
       order: linked ? linked.index : transcript.items.length + seq,
     })
@@ -150,6 +154,7 @@ export function extractSubagents(transcript: Transcript): SubagentItem[] {
         stoppable: false,
         tracked: true,
         background: false,
+        interactive: false,
       },
       order: index,
     })

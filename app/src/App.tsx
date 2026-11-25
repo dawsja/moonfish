@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils"
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { PhonePairingHost } from "@/components/settings/PhoneSection"
 import { PromptHost } from "@/components/Prompt"
 import { ImageLightbox } from "@/components/ImageView"
@@ -29,6 +29,8 @@ export function App() {
   const view = useApp((s) => s.view)
   const layout = useApp((s) => s.layout)
   const setLayout = useApp((s) => s.setLayout)
+  const [resizing, setResizing] = useState(false)
+  const rightShown = view === "chat" && layout.rightOpen
 
   useEffect(() => {
     load().then(() => {
@@ -65,9 +67,6 @@ export function App() {
         e.preventDefault()
         s.setActive({ chatId: null, draftCwd: null, viewer: null })
         useApp.setState({ view: "chat" })
-      } else if (e.ctrlKey && e.key === ",") {
-        e.preventDefault()
-        s.view === "settings" ? s.closeSettings() : s.openSettings()
       } else if (e.key === "Escape" && s.view === "settings" && !e.defaultPrevented) {
         // A menu, select or dialog inside Settings closes first (Radix marks its Esc handled).
         s.closeSettings()
@@ -82,17 +81,33 @@ export function App() {
       <div className="flex h-full min-h-0 flex-col overflow-clip bg-sidebar">
         <TitleBar />
         {ready ? (
-          <div className={cn("flex min-h-0 flex-1 pr-2 pb-2", layout.sidebarWidth > 0 ? "" : "pl-2")}>
-            {layout.sidebarWidth > 0 ? (
-              <>
-                <div style={{ width: layout.sidebarWidth }} className="shrink-0">
-                  <ErrorBoundary label="the sidebar">
-                    <Sidebar />
-                  </ErrorBoundary>
-                </div>
-                <Resizer side="left" defaultWidth={defaultLayout.sidebarWidth} width={layout.sidebarWidth} min={200} max={460} onWidth={(w) => setLayout({ sidebarWidth: w })} />
-              </>
-            ) : null}
+          <div className="flex min-h-0 flex-1 pr-2 pb-2">
+            <div
+              aria-hidden={!layout.sidebarOpen}
+              inert={!layout.sidebarOpen}
+              style={{ width: layout.sidebarOpen ? layout.sidebarWidth : 0 }}
+              className={cn(
+                "flex shrink-0 justify-end overflow-hidden",
+                !resizing && "transition-[width,opacity] duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
+                !layout.sidebarOpen && "pointer-events-none opacity-0",
+              )}
+            >
+              <div style={{ width: layout.sidebarWidth }} className="h-full shrink-0">
+                <ErrorBoundary label="the sidebar">
+                  <Sidebar />
+                </ErrorBoundary>
+              </div>
+            </div>
+            <Resizer
+              side="left"
+              defaultWidth={defaultLayout.sidebarWidth}
+              width={layout.sidebarWidth}
+              min={200}
+              max={460}
+              disabled={!layout.sidebarOpen}
+              onDragChange={setResizing}
+              onWidth={(w) => setLayout({ sidebarWidth: w })}
+            />
             <main className="flex min-w-0 flex-1 flex-col">
               {view === "settings" ? (
                 <div className="min-h-0 flex-1 overflow-clip rounded-lg border bg-background">
@@ -108,16 +123,32 @@ export function App() {
                 </section>
               )}
             </main>
-            {view === "chat" && layout.rightOpen ? (
-              <>
-                <Resizer side="right" defaultWidth={defaultLayout.rightWidth} width={layout.rightWidth} min={260} max={640} onWidth={(w) => setLayout({ rightWidth: w })} />
-                <div style={{ width: layout.rightWidth }} className="shrink-0 overflow-clip rounded-lg border bg-background">
-                  <ErrorBoundary label="the side panel">
-                    <RightPanel />
-                  </ErrorBoundary>
-                </div>
-              </>
-            ) : null}
+            <div
+              aria-hidden={!rightShown}
+              inert={!rightShown}
+              style={{ width: rightShown ? layout.rightWidth + 8 : 0 }}
+              className={cn(
+                "flex shrink-0 justify-start overflow-hidden",
+                !resizing && "transition-[width,opacity] duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
+                !rightShown && "pointer-events-none opacity-0",
+              )}
+            >
+              <Resizer
+                side="right"
+                defaultWidth={defaultLayout.rightWidth}
+                width={layout.rightWidth}
+                min={260}
+                max={640}
+                disabled={!rightShown}
+                onDragChange={setResizing}
+                onWidth={(w) => setLayout({ rightWidth: w })}
+              />
+              <div style={{ width: layout.rightWidth }} className="h-full shrink-0 overflow-clip rounded-lg border bg-background">
+                <ErrorBoundary label="the side panel">
+                  <RightPanel />
+                </ErrorBoundary>
+              </div>
+            </div>
           </div>
         ) : error ? (
           // Settings couldn't be loaded at all: say so, instead of an empty window.

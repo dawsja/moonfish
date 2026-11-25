@@ -84,6 +84,8 @@ describe("extractSubagents", () => {
       stoppable: false,
       tracked: true,
       background: false,
+      sessionId: undefined,
+      interactive: false,
     })
   })
 
@@ -144,6 +146,7 @@ describe("extractSubagents", () => {
       stoppable: false,
       tracked: true,
       background: false,
+      interactive: false,
     })
     expect(result[1].taskId).toBeUndefined()
     expect(result[1]).toMatchObject({

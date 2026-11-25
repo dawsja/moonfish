@@ -34,6 +34,29 @@ struct Envelope<'a> {
     seq: u64,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SubagentEnvelope<'a> {
+    chat_id: &'a str,
+    task_id: &'a str,
+    event: &'a ChatEvent,
+    seq: u64,
+}
+
+#[derive(Default)]
+struct SubagentLog {
+    events: Vec<ChatEvent>,
+    busy: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentSnapshot {
+    pub events: Vec<ChatEvent>,
+    pub seq: u64,
+    pub busy: bool,
+}
+
 type Slot = Arc<Mutex<Box<dyn Driver>>>;
 
 /// What a chat waits on you for (see [`Chats::attention`]).
@@ -162,6 +185,7 @@ pub struct Chats {
     restart: Arc<Mutex<std::collections::HashSet<String>>>,
     /// Per chat, the log as it's being written (kept while the app runs).
     logs: Mutex<HashMap<String, Arc<Mutex<Log>>>>,
+    subagents: Arc<Mutex<HashMap<(String, String), SubagentLog>>>,
     feed: broadcast::Sender<Feed>,
 }
 
@@ -248,6 +272,7 @@ impl Chats {
             metas: Arc::new(Mutex::new(HashMap::new())),
             restart: Arc::new(Mutex::new(std::collections::HashSet::new())),
             logs: Mutex::new(HashMap::new()),
+            subagents: Arc::new(Mutex::new(HashMap::new())),
             feed: broadcast::channel(4096).0,
         }
     }
@@ -527,11 +552,32 @@ impl Chats {
 
         let (publisher, metas, feed) = (self.publisher(app, chat_id), self.metas.clone(), self.feed.clone());
         let restart = self.restart.clone();
+        let subagents = self.subagents.clone();
         let activity = Arc::new(Mutex::new(Activity::new()));
         self.activity.lock().unwrap().insert(chat_id.to_string(), activity.clone());
         let sink: driver::Sink = Arc::new(move |event: ChatEvent| {
             let mut activity = activity.lock().unwrap();
             if activity.stopped {
+                return;
+            }
+            if let ChatEvent::SubagentEvent { task_id, event } = event {
+                drop(activity);
+                let ev = *event;
+                let seq = {
+                    let mut map = subagents.lock().unwrap();
+                    let log = map.entry((publisher.id.clone(), task_id.clone())).or_default();
+                    match &ev {
+                        ChatEvent::TurnStarted { .. } | ChatEvent::UserMessage { .. } => log.busy = true,
+                        ChatEvent::TurnFinished { .. } | ChatEvent::Exited { .. } | ChatEvent::Error { .. } => log.busy = false,
+                        _ => {}
+                    }
+                    log.events.push(ev.clone());
+                    log.events.len() as u64
+                };
+                let _ = publisher.app.emit(
+                    "subagent-event",
+                    SubagentEnvelope { chat_id: &publisher.id, task_id: &task_id, event: &ev, seq },
+                );
                 return;
             }
             let tasks_before = activity.tasks;
@@ -615,6 +661,28 @@ impl Chats {
         match self.driver(chat_id) {
             Some(d) => d.lock().unwrap().stop_task(task_id),
             None => Err("The agent isn't running; its background work stopped with it.".into()),
+        }
+    }
+
+    pub fn subagent_snapshot(&self, chat_id: &str, task_id: &str) -> SubagentSnapshot {
+        let map = self.subagents.lock().unwrap();
+        match map.get(&(chat_id.to_string(), task_id.to_string())) {
+            Some(log) => SubagentSnapshot { events: log.events.clone(), seq: log.events.len() as u64, busy: log.busy },
+            None => SubagentSnapshot { events: Vec::new(), seq: 0, busy: false },
+        }
+    }
+
+    pub fn send_subagent(&self, chat_id: &str, task_id: &str, prompt: Prompt) -> Result<(), String> {
+        match self.driver(chat_id) {
+            Some(d) => d.lock().unwrap().send_subagent(task_id, prompt),
+            None => Err("The chat's agent isn't running anymore.".into()),
+        }
+    }
+
+    pub fn interrupt_subagent(&self, chat_id: &str, task_id: &str) -> Result<(), String> {
+        match self.driver(chat_id) {
+            Some(d) => d.lock().unwrap().interrupt_subagent(task_id),
+            None => Ok(()),
         }
     }
 
@@ -771,6 +839,7 @@ impl Chats {
         let gate = self.send_gate(chat_id);
         let _gate = gate.lock().unwrap();
         self.close_locked(chat_id);
+        self.subagents.lock().unwrap().retain(|(cid, _), _| cid != chat_id);
         self.edit(chat_id, |meta| {
             meta.agent_session_id = None;
             meta.goal = None;
@@ -921,6 +990,7 @@ impl Chats {
         self.close_locked(chat_id);
         self.restart.lock().unwrap().remove(chat_id);
         self.logs.lock().unwrap().remove(chat_id);
+        self.subagents.lock().unwrap().retain(|(cid, _), _| cid != chat_id);
         // A rename or pin already saving must finish before the chat directory is removed.
         let _metas = self.metas.lock().unwrap();
         self.store.delete(chat_id).map_err(|e| e.to_string())

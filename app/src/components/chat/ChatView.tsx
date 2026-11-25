@@ -30,6 +30,7 @@ import { Transcript, useDock, type JumpTarget } from "./Transcript"
 import { isDockTask, TasksDock } from "./TasksDock"
 import { PlanDock } from "./PlanDock"
 import { SubagentsMenu } from "./SubagentsMenu"
+import { SubagentView } from "./SubagentView"
 import { extractSubagents, type SubagentItem } from "@/lib/subagents"
 
 /** The active chat, a new chat in the active project, or a file/diff viewer. */
@@ -272,18 +273,33 @@ function OpenChat({ project, meta, transcript }: { project: Project; meta: ChatM
   const subagents = useMemo(() => extractSubagents(transcript), [transcript])
   const dockTasks = useMemo(() => transcript.tasks.filter(isDockTask), [transcript.tasks])
   const [jumpTarget, setJumpTarget] = useState<JumpTarget | null>(null)
+  const [openSubagent, setOpenSubagent] = useState<SubagentItem | null>(null)
   const jumpSeq = useRef(0)
   const jumpToItem = (id: string) => setJumpTarget({ id, seq: ++jumpSeq.current })
 
+  const activeSubagent = useMemo(() => {
+    if (!openSubagent) return null
+    const id = openSubagent.taskId ?? openSubagent.id
+    return subagents.find((s) => (s.taskId ?? s.id) === id) ?? { ...openSubagent, status: "completed" as const }
+  }, [openSubagent, subagents])
+
   return (
     <CwdContext.Provider value={transcript.cwd ?? meta.cwd}>
+    {activeSubagent ? (
+      <SubagentView
+        chatId={meta.id}
+        subagent={activeSubagent}
+        onBack={() => setOpenSubagent(null)}
+        onStop={activeSubagent.taskId ? () => void chats.stopTask(meta.id, activeSubagent.taskId!) : undefined}
+      />
+    ) : (
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-clip bg-background">
       <ChatHeader
         meta={meta}
         transcript={transcript}
-        model={meta.model || transcript.model || d.model}
         subagents={subagents}
         onStopTask={(taskId) => void chats.stopTask(meta.id, taskId)}
+        onOpenSubagent={(s) => setOpenSubagent(s)}
         onJumpToItem={jumpToItem}
       />
       <div ref={stage} className="relative min-h-0 flex-1">
@@ -354,6 +370,7 @@ function OpenChat({ project, meta, transcript }: { project: Project; meta: ChatM
         </div>
       </div>
     </div>
+    )}
     </CwdContext.Provider>
   )
 }
@@ -361,16 +378,16 @@ function OpenChat({ project, meta, transcript }: { project: Project; meta: ChatM
 function ChatHeader({
   meta,
   transcript,
-  model,
   subagents,
   onStopTask,
+  onOpenSubagent,
   onJumpToItem,
 }: {
   meta: ChatMeta
   transcript: T
-  model: string
   subagents: SubagentItem[]
   onStopTask: (taskId: string) => void
+  onOpenSubagent: (subagent: SubagentItem) => void
   onJumpToItem: (itemId: string) => void
 }) {
   return (
@@ -378,9 +395,9 @@ function ChatHeader({
       <AgentGlyph agent={meta.agent} className="size-3.5 shrink-0" />
       <span className="truncate text-[13px] font-medium">{meta.title || "New chat"}</span>
       {transcript.running ? <LoaderCircle className="size-3.5 shrink-0 animate-spin text-muted-foreground" /> : null}
-      <span className="ml-auto truncate font-mono text-[11px] text-faint">{model}</span>
-      <SubagentsMenu subagents={subagents} onStop={onStopTask} onJumpToItem={onJumpToItem} />
-      <DropdownMenu>
+      <div className="ml-auto flex shrink-0 items-center gap-2">
+        <SubagentsMenu subagents={subagents} onStop={onStopTask} onOpenSubagent={onOpenSubagent} onJumpToItem={onJumpToItem} />
+        <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button className="rounded-md grid size-7 place-items-center text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Chat menu">
             <MoreHorizontal className="size-4" />
@@ -408,6 +425,7 @@ function ChatHeader({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      </div>
     </div>
   )
 }

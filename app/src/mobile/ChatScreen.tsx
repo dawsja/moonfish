@@ -1,7 +1,7 @@
 import { useGoalControls } from "@/components/chat/GoalPanel"
 import { supportsGoals } from "@/lib/goals"
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from "react"
-import { Check, ChevronUp, CircleSlash, MoreHorizontal, X } from "lucide-react"
+import { ChevronUp, MoreHorizontal, X } from "lucide-react"
 import { toast } from "sonner"
 import { ApprovalCard } from "@/components/chat/Approval"
 import { ImageSourceContext, type ImageSource } from "@/components/chat/ChatImages"
@@ -95,18 +95,15 @@ export function ChatScreen({ chatId }: { chatId: string }) {
   const agent = agents.find((a) => a.kind === meta?.agent)
   const t = transcript ?? emptyTranscript()
   const subagents = useMemo(() => extractSubagents(t), [t])
+  const runningSubagents = useMemo(() => subagents.filter((s) => s.status === "running"), [subagents])
   const dockTasks = useMemo(() => t.tasks.filter(isDockTask), [t.tasks])
-  const subagentSteps = useSubagentSteps(subagents)
-  const runningSubagents = subagents.filter((s) => s.status === "running").length
-  const failedSubagents = subagents.some((s) => s.status === "failed")
-  const stoppedSubagents = runningSubagents === 0 && !failedSubagents && subagents.length > 0 && subagents.every((s) => s.status === "stopped")
+  const subagentSteps = useSubagentSteps(runningSubagents)
   const { models, commands, load, failed: modelsFailed, error: modelsError } = useCatalog(agent, meta?.projectId ?? null, t)
   const source = useMemo<ImageSource>(
     () => ({ key: `phone:${desktopId}:${chatId}`, chatImage: (file) => api.image(chatId, file), readImage: (path) => api.readImage(chatId, path) }),
     [desktopId, chatId],
   )
   const model = meta?.model || t.model || agent?.defaultModel || ""
-  const modelName = models.find((m) => m.id === model)?.name ?? model
   // The input and what's docked over it float on the transcript, which scrolls under them.
   const { stage, tray } = useDock()
   const goals = useGoalControls(meta?.goal, (goal) => st.send(chatId, "", [], { goal }).then(Boolean), {
@@ -209,26 +206,18 @@ export function ChatScreen({ chatId }: { chatId: string }) {
 
       <TitleCapsule
         title={meta?.title || "New chat"}
-        subtitle={[project?.name, meta ? (agent?.name ?? AGENT_LABEL[meta.agent]) : null, modelName].filter(Boolean).join(" · ")}
+        subtitle={[project?.name, meta ? (agent?.name ?? AGENT_LABEL[meta.agent]) : null].filter(Boolean).join(" · ")}
         actions={
           <div className="flex shrink-0 items-center gap-1">
-            {subagents.length > 0 ? (
+            {runningSubagents.length > 0 ? (
               <button
                 type="button"
                 className="flex h-10 shrink-0 items-center gap-1.5 rounded-full bg-background px-3 text-[12.5px] font-medium text-foreground active:bg-accent"
-                aria-label={`Subagents: ${subagentSummary(subagents)}`}
+                aria-label={`Subagents: ${subagentSummary(runningSubagents)}`}
                 onClick={() => setSubagentsOpen(true)}
               >
-                {runningSubagents > 0 ? (
-                  <span className="size-2 shrink-0 rounded-full bg-green animate-pulse" />
-                ) : failedSubagents ? (
-                  <X className="size-3.5 shrink-0 text-red" />
-                ) : stoppedSubagents ? (
-                  <CircleSlash className="size-3.5 shrink-0 text-faint" />
-                ) : (
-                  <Check className="size-3.5 shrink-0 text-green" />
-                )}
-                <span className="tabular-nums">{runningSubagents > 0 ? runningSubagents : subagents.length}</span>
+                <span className="size-2 shrink-0 rounded-full bg-green animate-pulse" />
+                <span className="tabular-nums">{runningSubagents.length}</span>
               </button>
             ) : null}
             <RoundButton label="Chat menu" className="bg-background" onClick={() => setMenu(true)}>
@@ -240,13 +229,13 @@ export function ChatScreen({ chatId }: { chatId: string }) {
       <LinkBanner className="absolute inset-x-3 top-[calc(var(--safe-top)+68px)] z-10" />
       <ChatMenu meta={menu ? (meta ?? null) : null} onClose={() => setMenu(false)} />
       <PullSheet
-        open={subagentsOpen && subagents.length > 0}
+        open={subagentsOpen && runningSubagents.length > 0}
         onClose={() => setSubagentsOpen(false)}
-        title="Subagents"
-        header={<SheetHead title="Subagents" sub={subagentSummary(subagents)} />}
+        title="Running subagents"
+        header={<SheetHead title="Running subagents" sub={subagentSummary(runningSubagents)} />}
       >
         <SubagentsPanel
-          subagents={subagents}
+          subagents={runningSubagents}
           open={subagentsOpen}
           stepsById={subagentSteps}
           onStop={link === "connected" ? (id) => void st.stopTask(chatId, id) : undefined}

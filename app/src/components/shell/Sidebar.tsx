@@ -101,7 +101,6 @@ export function Sidebar() {
         >
           <Settings className="size-3.5" />
           Settings
-          <span className="ml-auto font-mono text-[10.5px] text-faint">Ctrl ,</span>
         </button>
       </div>
     </aside>

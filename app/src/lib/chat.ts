@@ -31,6 +31,8 @@ export type BackgroundTask = {
   tracked: boolean
   stoppable: boolean
   background?: boolean
+  sessionId?: string | null
+  interactive?: boolean
 }
 export type QuestionOption = { label: string; description: string }
 export type Question = { id: string; header: string; question: string; options: QuestionOption[]; multi: boolean; other: boolean; secret: boolean }
@@ -292,6 +294,7 @@ export function replay(events: ChatEvent[], busy = false, live = busy): Transcri
 
 /** A chat as the desktop has it now (`chat_snapshot`, or a phone's `chat.open`). */
 export type Snapshot = { events: ChatEvent[]; seq: number; live: boolean; busy: boolean }
+export type SubagentSnapshot = { events: ChatEvent[]; seq: number; busy: boolean }
 
 /** A turn's items between its user message and its end, grouped for display: each run of
  *  reasoning and tool calls becomes one "work" block; text, approvals and notices stand alone. */

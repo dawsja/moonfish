@@ -1,5 +1,5 @@
 import { hideGoalMarkers } from "@/lib/goals"
-import { useEffect, useLayoutEffect, useRef, useState, type DependencyList } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DependencyList } from "react"
 import { ArrowDown, Check, ChevronRight, CircleAlert, Copy, Info, ListChecks } from "lucide-react"
 import { blocks, formatDuration, formatTokens, type Decision, type Item, type Transcript as T } from "@/lib/chat"
 import { copyText } from "@/lib/clipboard"
@@ -49,33 +49,61 @@ export function Transcript({ transcript, jumpTarget, className }: { transcript: 
   const touch = useTouch()
   const [stuck, setStuck] = useState(true)
   const [far, setFar] = useState(false)
-  const all = blocks(transcript.items)
+  const [jumpingToEnd, setJumpingToEnd] = useState(false)
+  const all = useMemo(() => blocks(transcript.items), [transcript.items])
   // Long chats mount only their latest blocks; older ones load on request.
   const [limit, setLimit] = useState(WINDOW)
   const hidden = Math.max(0, all.length - limit)
   const list = hidden ? all.slice(hidden) : all
   const lastWork = list.findLastIndex((b) => b.kind === "work")
 
-  // Follow new content while the view is at the bottom.
   const stuckRef = useRef(stuck)
   const touching = useRef(false)
-  const follow = (value: boolean) => {
-    // Event handlers and ResizeObserver must see this before React renders again.
+  const jumping = useRef(false)
+  const jumpHeight = useRef(0)
+  const jumpSettle = useRef<number | null>(null)
+  const handledJumpSeq = useRef(0)
+  const stopJump = useCallback(() => {
+    if (jumpSettle.current !== null) {
+      clearTimeout(jumpSettle.current)
+      jumpSettle.current = null
+    }
+    if (!jumping.current) return
+    jumping.current = false
+    setJumpingToEnd(false)
+  }, [])
+  const follow = useCallback((value: boolean) => {
     stuckRef.current = value
     setStuck(value)
+  }, [])
+  const jumpToLatest = () => {
+    const el = scroller.current
+    if (!el) return
+    const rest = el.scrollHeight - el.scrollTop - el.clientHeight
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    if (rest <= 2 || reduced) {
+      stopJump()
+      el.scrollTop = el.scrollHeight
+      follow(true)
+      return
+    }
+    jumping.current = true
+    jumpHeight.current = el.scrollHeight
+    setJumpingToEnd(true)
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
   }
-  // A new message from you (sent here, from the phone, or a queued one going out) brings the
-  // view back to the bottom even if you'd scrolled up to read: what you just said, and the
-  // answer to it, are what's worth seeing.
   const lastUser = transcript.items.findLast((i) => i.kind === "user")?.id
   const seenUser = useRef(lastUser)
   useLayoutEffect(() => {
     const el = scroller.current
     if (lastUser !== seenUser.current) {
       seenUser.current = lastUser
-      if (lastUser && !stuckRef.current) follow(true)
+      if (lastUser && !stuckRef.current) {
+        stopJump()
+        follow(true)
+      }
     }
-    if (el && stuckRef.current && !touching.current) el.scrollTop = el.scrollHeight
+    if (el && stuckRef.current && !touching.current && !jumping.current) el.scrollTop = el.scrollHeight
   })
   useEffect(() => {
     const el = scroller.current
@@ -98,9 +126,23 @@ export function Transcript({ transcript, jumpTarget, className }: { transcript: 
     const onScroll = () => {
       shade()
       const top = Math.max(0, el.scrollTop)
-      const atBottom = el.scrollHeight - top - el.clientHeight <= 2
-      // Even a small move toward history releases the bottom lock. Only reaching
-      // the bottom again resumes following; a proximity threshold traps slow swipes.
+      const rest = el.scrollHeight - top - el.clientHeight
+      const atBottom = rest <= 2
+      if (jumping.current) {
+        if (jumpSettle.current !== null) clearTimeout(jumpSettle.current)
+        if (rest <= 4) {
+          stopJump()
+          follow(true)
+        } else if (top < previousTop) {
+          stopJump()
+          follow(false)
+        } else {
+          // Fallback for webviews without scrollend.
+          jumpSettle.current = window.setTimeout(onScrollEnd, 180)
+        }
+        previousTop = top
+        return
+      }
       // A move up that still ends at the bottom isn't the reader: the content got shorter
       // (finished steps collapsing, estimated block heights settling) and the browser
       // clamped the scroll position, so keep following.
@@ -108,18 +150,39 @@ export function Transcript({ transcript, jumpTarget, className }: { transcript: 
       else if (top > previousTop && atBottom) follow(true)
       previousTop = top
     }
+    const onScrollEnd = () => {
+      if (!jumping.current) return
+      const top = Math.max(0, el.scrollTop)
+      const rest = el.scrollHeight - top - el.clientHeight
+      if (rest <= 2) {
+        stopJump()
+        follow(true)
+      } else if (el.scrollHeight > jumpHeight.current + 2) {
+        jumpHeight.current = el.scrollHeight
+        el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
+      } else {
+        stopJump()
+        if (rest <= 8) follow(true)
+      }
+    }
     const onTouchStart = (event: TouchEvent) => {
       touching.current = true
       touchY = event.touches[0].clientY
     }
     const onTouchMove = (event: TouchEvent) => {
       const y = event.touches[0].clientY
-      if (y > touchY) follow(false)
+      if (y > touchY) {
+        stopJump()
+        follow(false)
+      }
       touchY = y
     }
     const onTouchEnd = () => { touching.current = false }
     const onWheel = (event: WheelEvent) => {
-      if (event.deltaY < 0) follow(false)
+      if (event.deltaY < 0) {
+        stopJump()
+        follow(false)
+      }
     }
     el.addEventListener("touchstart", onTouchStart, { passive: true })
     el.addEventListener("touchmove", onTouchMove, { passive: true })
@@ -127,17 +190,21 @@ export function Transcript({ transcript, jumpTarget, className }: { transcript: 
     el.addEventListener("touchcancel", onTouchEnd, { passive: true })
     el.addEventListener("wheel", onWheel, { passive: true })
     el.addEventListener("scroll", onScroll, { passive: true })
-    // Sizes change without a render here too: a card docking under the chat (or the phone's
-    // keyboard) shrinks the view, and blocks that skip layout off-screen grow as they come in.
-    // While at the bottom, stay there.
+    el.addEventListener("scrollend", onScrollEnd, { passive: true })
     const pin = new ResizeObserver(() => {
       if (stuckRef.current && !touching.current) el.scrollTop = el.scrollHeight
+      else if (jumping.current && !touching.current && el.scrollHeight > jumpHeight.current + 2) {
+        jumpHeight.current = el.scrollHeight
+        el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
+      }
       shade()
     })
     pin.observe(el)
     if (el.firstElementChild) pin.observe(el.firstElementChild)
     return () => {
+      if (jumpSettle.current !== null) clearTimeout(jumpSettle.current)
       el.removeEventListener("scroll", onScroll)
+      el.removeEventListener("scrollend", onScrollEnd)
       el.removeEventListener("touchstart", onTouchStart)
       el.removeEventListener("touchmove", onTouchMove)
       el.removeEventListener("touchend", onTouchEnd)
@@ -145,20 +212,20 @@ export function Transcript({ transcript, jumpTarget, className }: { transcript: 
       el.removeEventListener("wheel", onWheel)
       pin.disconnect()
     }
-  }, [])
+  }, [follow, stopJump])
 
-  // Jump to a specific transcript item (such as a subagent tool call): expand window if hidden,
-  // release bottom lock, wait for folded WorkGroup to open, then scroll and highlight.
   useEffect(() => {
-    if (!jumpTarget) return
+    if (!jumpTarget || handledJumpSeq.current === jumpTarget.seq) return
     const idx = all.findIndex((b) => (b.kind === "work" ? b.items.some((it) => it.id === jumpTarget.id) : b.item.id === jumpTarget.id))
     if (idx < 0) return
+    stopJump()
     follow(false)
     const needed = all.length - idx
     if (needed > limit) {
       setLimit(needed)
       return
     }
+    handledJumpSeq.current = jumpTarget.seq
     let frames = 0
     let cancelled = false
     const locate = () => {
@@ -181,8 +248,7 @@ export function Transcript({ transcript, jumpTarget, className }: { transcript: 
     return () => {
       cancelled = true
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jumpTarget, limit])
+  }, [jumpTarget, all, limit, stopJump, follow])
 
   return (
     <div ref={frame} className={cn("relative min-h-0", className)}>
@@ -232,22 +298,21 @@ export function Transcript({ transcript, jumpTarget, className }: { transcript: 
           background: "linear-gradient(transparent, color-mix(in srgb, var(--background) 55%, transparent) 70%, var(--background))",
         }}
       />
-      {!stuck && far ? (
-        <Tip content="Jump to latest">
-          <button
-            style={{ bottom: "calc(var(--dock, 0px) + 0.75rem)" }}
-            className={cn("absolute left-1/2 grid -translate-x-1/2 place-items-center rounded-full border bg-popover text-muted-foreground shadow-lg hover:text-foreground", touch ? "size-11" : "size-8")}
-            aria-label="Jump to latest"
-            onClick={() => {
-              const el = scroller.current
-              if (el) el.scrollTop = el.scrollHeight
-              follow(true)
-            }}
-          >
-            <ArrowDown className={touch ? "size-5" : "size-4"} />
-          </button>
-        </Tip>
-      ) : null}
+      <button
+        type="button"
+        aria-hidden={stuck || !far || jumpingToEnd}
+        tabIndex={!stuck && far && !jumpingToEnd ? 0 : -1}
+        style={{ bottom: "calc(var(--dock, 0px) + 0.75rem)" }}
+        className={cn(
+          "absolute left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full border bg-popover font-medium whitespace-nowrap text-muted-foreground shadow-lg transition-[opacity,transform,color] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] hover:text-foreground",
+          touch ? "h-10 px-4 text-[13px]" : "h-8 px-3 text-[12px]",
+          !stuck && far && !jumpingToEnd ? "translate-y-0 opacity-100" : "pointer-events-none translate-y-2 opacity-0",
+        )}
+        onClick={jumpToLatest}
+      >
+        <ArrowDown className={touch ? "size-4" : "size-3.5"} />
+        <span>Jump to latest</span>
+      </button>
     </div>
   )
 }

@@ -18,6 +18,7 @@ export type ActiveTarget = Partial<{
 
 type Layout = {
   sidebarWidth: number
+  sidebarOpen: boolean
   rightWidth: number
   rightOpen: boolean
   rightTab: RightTab
@@ -54,14 +55,17 @@ type AppStore = {
 }
 
 const LAYOUT_KEY = "moonfish.layout"
-export const defaultLayout: Readonly<Layout> = { sidebarWidth: 272, rightWidth: 340, rightOpen: true, rightTab: "scm" }
+export const defaultLayout: Readonly<Layout> = { sidebarWidth: 272, sidebarOpen: true, rightWidth: 340, rightOpen: true, rightTab: "scm" }
 
 function loadLayout(): Layout {
   try {
     const raw = JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? "{}")
     if (!raw || typeof raw !== "object") return defaultLayout
+    const savedSidebarWidth = typeof raw.sidebarWidth === "number" ? raw.sidebarWidth : defaultLayout.sidebarWidth
+    const sidebarOpen = typeof raw.sidebarOpen === "boolean" ? raw.sidebarOpen : savedSidebarWidth > 0
     return {
-      sidebarWidth: typeof raw.sidebarWidth === "number" ? raw.sidebarWidth : defaultLayout.sidebarWidth,
+      sidebarWidth: savedSidebarWidth > 0 ? savedSidebarWidth : defaultLayout.sidebarWidth,
+      sidebarOpen,
       rightWidth: typeof raw.rightWidth === "number" ? raw.rightWidth : defaultLayout.rightWidth,
       rightOpen: typeof raw.rightOpen === "boolean" ? raw.rightOpen : defaultLayout.rightOpen,
       rightTab: raw.rightTab === "files" || raw.rightTab === "scm" || raw.rightTab === "history" || raw.rightTab === "pr" ? raw.rightTab : defaultLayout.rightTab,

@@ -96,6 +96,11 @@ pub enum ChatEvent {
     Tasks {
         tasks: Vec<BackgroundTask>,
     },
+    /// An event from a subagent's own thread (identified by `task_id`).
+    SubagentEvent {
+        task_id: String,
+        event: Box<ChatEvent>,
+    },
     TurnFinished {
         turn_id: String,
         usage: Option<Usage>,
@@ -366,6 +371,12 @@ pub struct BackgroundTask {
     /// `false`: running inside the current turn (e.g. an in-turn subagent).
     #[serde(default = "yes")]
     pub background: bool,
+    /// The subagent's own session/thread id, when it can be watched or messaged directly.
+    #[serde(default)]
+    pub session_id: Option<String>,
+    /// Moonfish can send messages directly to this subagent (`Driver::send_subagent`).
+    #[serde(default)]
+    pub interactive: bool,
 }
 
 fn yes() -> bool {
@@ -390,6 +401,8 @@ impl BackgroundTask {
             tracked: true,
             stoppable: false,
             background: true,
+            session_id: None,
+            interactive: false,
         }
     }
 
@@ -424,6 +437,8 @@ impl TaskList {
                 t.title = task.title;
                 t.detail = task.detail.or(t.detail.take());
                 t.item_id = task.item_id.or(t.item_id.take());
+                t.session_id = task.session_id.or(t.session_id.take());
+                t.interactive |= task.interactive;
                 if task.background {
                     t.background = true;
                     t.tracked = task.tracked;
@@ -444,6 +459,24 @@ impl TaskList {
             return false;
         }
         t.background = true;
+        true
+    }
+
+    pub fn set_subagent_session(&mut self, id: &str, session_id: String, interactive: bool) -> bool {
+        let Some(t) = self.tasks.iter_mut().find(|t| t.id == id) else { return false };
+        let changed = t.session_id.as_deref() != Some(session_id.as_str()) || t.interactive != interactive;
+        t.session_id = Some(session_id);
+        t.interactive = interactive;
+        changed
+    }
+
+    pub fn reopen(&mut self, id: &str) -> bool {
+        let Some(t) = self.tasks.iter_mut().find(|t| t.id == id) else { return false };
+        if t.status == TaskStatus::Running {
+            return false;
+        }
+        t.status = TaskStatus::Running;
+        t.ended_at = None;
         true
     }
 

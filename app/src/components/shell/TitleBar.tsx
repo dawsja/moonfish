@@ -25,12 +25,11 @@ export function TitleBar() {
         <span data-tauri-drag-region className="font-mono text-[12px] font-bold tracking-tight text-brand">Moonfish</span>
       </div>
       <Tip content="Toggle sidebar" side="bottom">
-        {/* Bright while the sidebar is shown, as the side panel's toggle is. */}
         <button
-          className={cn("rounded-md grid size-7 place-items-center hover:bg-accent hover:text-foreground", layout.sidebarWidth > 0 ? "text-foreground" : "text-muted-foreground")}
+          className={cn("rounded-md grid size-7 place-items-center hover:bg-accent hover:text-foreground", layout.sidebarOpen ? "text-foreground" : "text-muted-foreground")}
           aria-label="Toggle sidebar"
-          aria-pressed={layout.sidebarWidth > 0}
-          onClick={() => setLayout({ sidebarWidth: layout.sidebarWidth > 0 ? 0 : 272 })}
+          aria-pressed={layout.sidebarOpen}
+          onClick={() => setLayout({ sidebarOpen: !layout.sidebarOpen })}
         >
           <PanelLeft className="size-3.5" />
         </button>

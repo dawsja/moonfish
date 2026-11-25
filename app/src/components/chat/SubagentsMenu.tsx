@@ -1,13 +1,11 @@
-import { useEffect, useMemo, useState } from "react"
-import { ArrowUpRight, Check, ChevronDown, CircleDashed, CircleSlash, Copy, X } from "lucide-react"
+import { useEffect, useState } from "react"
+import { ArrowUpRight, Check, ChevronDown, ChevronRight, CircleDashed, Copy, MessageSquare, X } from "lucide-react"
 import { Tip } from "@/components/Tip"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { formatDuration } from "@/lib/chat"
 import { copyText } from "@/lib/clipboard"
 import { subagentSummary, type SubagentItem } from "@/lib/subagents"
 import { cn } from "@/lib/utils"
-
-type Filter = "all" | "running" | "done"
 
 const MAX_STEPS = 5
 
@@ -66,65 +64,56 @@ function elapsedLabel(item: SubagentItem, now: number): string | null {
   return word
 }
 
-/** Top-bar subagents pill and floating popover (Option A). */
 export function SubagentsMenu({
   subagents,
   onStop,
+  onOpenSubagent,
   onJumpToItem,
 }: {
   subagents: SubagentItem[]
   onStop?: (taskId: string) => void
+  onOpenSubagent?: (subagent: SubagentItem) => void
   onJumpToItem?: (itemId: string) => void
 }) {
   const [open, setOpen] = useState(false)
-  const stepsById = useSubagentSteps(subagents)
+  const running = subagents.filter((s) => s.status === "running")
+  const stepsById = useSubagentSteps(running)
 
-  if (!subagents.length) return null
+  useEffect(() => {
+    if (!running.length && open) setOpen(false)
+  }, [running.length, open])
 
-  const runningCount = subagents.filter((s) => s.status === "running").length
-  const hasFailed = subagents.some((s) => s.status === "failed")
-  const allStopped = runningCount === 0 && !hasFailed && subagents.every((s) => s.status === "stopped")
-  const count = runningCount > 0 ? runningCount : subagents.length
+  if (!running.length) return null
+
+  const count = running.length
   const label = `${count} ${count === 1 ? "subagent" : "subagents"}`
-  const summary = subagentSummary(subagents)
+  const summary = subagentSummary(running)
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           type="button"
-          className={cn(
-            "flex h-7 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-[12px] font-medium transition-colors",
-            runningCount > 0
-              ? "bg-card text-foreground hover:bg-accent"
-              : "bg-card/60 text-muted-foreground hover:bg-accent hover:text-foreground",
-          )}
+          className="flex h-7 shrink-0 items-center gap-1.5 rounded-full border bg-card px-2.5 text-[12px] font-medium text-foreground transition-colors hover:bg-accent"
           aria-label={`Subagents: ${summary}`}
         >
-          {runningCount > 0 ? (
-            <span className="size-2 shrink-0 rounded-full bg-green animate-pulse" />
-          ) : hasFailed ? (
-            <X className="size-3.5 shrink-0 text-red" />
-          ) : allStopped ? (
-            <CircleSlash className="size-3.5 shrink-0 text-faint" />
-          ) : (
-            <Check className="size-3.5 shrink-0 text-green" />
-          )}
+          <span className="size-2 shrink-0 rounded-full bg-green animate-pulse" />
           <span>{label}</span>
           <ChevronDown className={cn("size-3.5 text-muted-foreground transition-transform", open && "rotate-180")} />
         </button>
       </PopoverTrigger>
       <PopoverContent align="end" sideOffset={6} className="w-[380px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border bg-popover p-0 shadow-xl">
         <div className="flex items-center gap-1.5 border-b px-3 py-2.5">
-          <span className="text-[12.5px] font-semibold text-foreground">Subagents</span>
+          <span className="text-[12.5px] font-semibold text-foreground">Running subagents</span>
           {summary ? <span className="text-faint">·</span> : null}
           {summary ? <span className="truncate font-mono text-[11px] text-faint">{summary}</span> : null}
         </div>
         <SubagentsPanel
-          subagents={subagents}
+          subagents={running}
           open={open}
           stepsById={stepsById}
           onStop={onStop}
+          onOpenSubagent={onOpenSubagent}
           onJumpToItem={onJumpToItem}
           onClose={() => setOpen(false)}
         />
@@ -133,12 +122,12 @@ export function SubagentsMenu({
   )
 }
 
-/** Shared filterable, expandable list of subagents used in both the desktop popover and mobile sheet. */
 export function SubagentsPanel({
   subagents,
   open,
   stepsById,
   onStop,
+  onOpenSubagent,
   onJumpToItem,
   onClose,
   touch = false,
@@ -147,80 +136,45 @@ export function SubagentsPanel({
   open: boolean
   stepsById: Record<string, string[]>
   onStop?: (taskId: string) => void
+  onOpenSubagent?: (subagent: SubagentItem) => void
   onJumpToItem?: (itemId: string) => void
   onClose?: () => void
   touch?: boolean
 }) {
-  const [filter, setFilter] = useState<Filter>("all")
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  const hasRunning = subagents.some((s) => s.status === "running")
-  const now = useNow(open && hasRunning)
+  const running = subagents.filter((s) => s.status === "running")
+  const now = useNow(open && running.length > 0)
 
-  // Auto-expand the first running subagent when opened if none is currently selected.
   useEffect(() => {
-    if (!open) return
+    if (!open || onOpenSubagent) return
     setExpandedId((current) => {
-      if (current && subagents.some((s) => s.id === current)) return current
-      return subagents.find((s) => s.status === "running")?.id ?? null
+      if (current && running.some((s) => s.id === current)) return current
+      return running[0]?.id ?? null
     })
-  }, [open, subagents])
-
-  // Reset filter when list drops to 3 or fewer so items aren't hidden behind absent pills.
-  useEffect(() => {
-    if (subagents.length <= 3 && filter !== "all") setFilter("all")
-  }, [subagents.length, filter])
-
-  const counts = useMemo(() => {
-    const running = subagents.filter((s) => s.status === "running").length
-    return { all: subagents.length, running, done: subagents.length - running }
-  }, [subagents])
-
-  const visible = useMemo(() => {
-    if (filter === "running") return subagents.filter((s) => s.status === "running")
-    if (filter === "done") return subagents.filter((s) => s.status !== "running")
-    return subagents
-  }, [subagents, filter])
+  }, [open, running, onOpenSubagent])
 
   return (
     <div className="flex min-h-0 flex-col">
-      {subagents.length > 3 ? (
-        <div className={cn("flex items-center gap-1 border-b px-3 py-1.5", touch && "px-4 py-2")}>
-          {(
-            [
-              ["all", `All (${counts.all})`],
-              ["running", `Running (${counts.running})`],
-              ["done", `Done (${counts.done})`],
-            ] as const
-          ).map(([id, text]) => (
-            <button
-              key={id}
-              type="button"
-              className={cn(
-                "rounded-full px-2.5 font-medium transition-colors",
-                touch ? "h-8 text-[12.5px]" : "h-6 text-[11px]",
-                filter === id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-              )}
-              onClick={() => setFilter(id)}
-            >
-              {text}
-            </button>
-          ))}
-        </div>
-      ) : null}
       <div className={cn("flex flex-col gap-1.5 overflow-y-auto overscroll-contain", touch ? "max-h-[65dvh] px-3 py-2.5" : "max-h-[min(70vh,440px)] p-2")}>
-        {visible.length === 0 ? (
-          <div className="px-2 py-4 text-center text-[12px] text-faint">
-            {filter === "running" ? "No running subagents." : "No finished subagents."}
-          </div>
+        {running.length === 0 ? (
+          <div className="px-2 py-4 text-center text-[12px] text-faint">No running subagents.</div>
         ) : (
-          visible.map((item) => (
+          running.map((item) => (
             <SubagentRow
               key={item.id}
               item={item}
               steps={stepsById[item.id] ?? []}
-              expanded={expandedId === item.id}
+              expanded={!onOpenSubagent && expandedId === item.id}
               now={now}
               touch={touch}
+              onOpen={
+                onOpenSubagent
+                  ? () => {
+                      onOpenSubagent(item)
+                      onClose?.()
+                    }
+                  : undefined
+              }
               onToggle={() => setExpandedId((cur) => (cur === item.id ? null : item.id))}
               onStop={item.taskId && onStop ? () => onStop(item.taskId!) : undefined}
               onJump={
@@ -245,6 +199,7 @@ function SubagentRow({
   expanded,
   now,
   touch,
+  onOpen,
   onToggle,
   onStop,
   onJump,
@@ -254,6 +209,7 @@ function SubagentRow({
   expanded: boolean
   now: number
   touch: boolean
+  onOpen?: () => void
   onToggle: () => void
   onStop?: () => void
   onJump?: () => void
@@ -262,33 +218,31 @@ function SubagentRow({
   const live = item.status === "running"
   const canStop = live && item.stoppable && !!onStop
   const elapsed = elapsedLabel(item, now)
-  const subline = live
-    ? item.detail ?? firstNonEmptyLine(item.prompt)
-    : item.detail ?? firstNonEmptyLine(item.output)
+  const subline = item.detail ?? firstNonEmptyLine(item.prompt)
   const showRole = !!item.role && item.role.toLowerCase() !== item.title.toLowerCase()
   const activeStep = steps[steps.length - 1] ?? item.detail
   const priorSteps = steps.length > 1 ? steps.slice(0, -1) : []
-  const showDetailInExpanded = live ? !!activeStep : !!item.detail && item.detail !== item.output
+  const showDetailInExpanded = !!activeStep
   const hasBody = !!item.prompt || showDetailInExpanded || !!item.output
 
   return (
     <div
       className={cn(
         "overflow-hidden rounded-lg border transition-colors",
-        expanded ? "border-border bg-card" : "border-border/60 bg-card/50 hover:bg-accent/40",
+        expanded ? "border-border bg-card" : "border-border/60 bg-card/50 hover:bg-accent/60",
       )}
     >
-      <div className={cn("flex items-start gap-2", touch ? "px-3 py-2.5" : "px-2.5 py-2")}>
+      <div className={cn("flex items-center gap-2", touch ? "px-3 py-2.5" : "px-2.5 py-2")}>
         <button
           type="button"
           className="flex min-w-0 flex-1 flex-col gap-0.5 text-left"
-          aria-expanded={expanded}
-          onClick={onToggle}
+          aria-expanded={onOpen ? undefined : expanded}
+          onClick={onOpen ?? onToggle}
         >
           <div className="flex w-full items-center gap-2">
             <StatusDot status={item.status} tracked={item.tracked} />
             <Tip content={!touch && item.title.length > 34 ? item.title : null}>
-              <span className={cn("min-w-0 flex-1 truncate font-medium", touch ? "text-[13.5px]" : "text-[12.5px]", live ? "text-foreground" : "text-foreground/90")}>
+              <span className={cn("min-w-0 flex-1 truncate font-medium text-foreground", touch ? "text-[13.5px]" : "text-[12.5px]")}>
                 {item.title}
               </span>
             </Tip>
@@ -298,9 +252,15 @@ function SubagentRow({
               </span>
             ) : null}
             {elapsed ? <span className="shrink-0 font-mono text-[11px] text-faint tabular-nums">{elapsed}</span> : null}
+            {onOpen ? (
+              <span className="flex shrink-0 items-center gap-0.5 text-[11px] text-muted-foreground">
+                {item.interactive ? <MessageSquare className="size-3" /> : null}
+                <ChevronRight className="size-3.5" />
+              </span>
+            ) : null}
           </div>
           {!expanded && subline ? (
-            <div className={cn("truncate pl-4", touch ? "text-[12.5px]" : "text-[11.5px]", item.status === "failed" ? "text-red/85" : "text-muted-foreground")}>
+            <div className={cn("truncate pl-4 text-muted-foreground", touch ? "text-[12.5px]" : "text-[11.5px]")}>
               {subline}
             </div>
           ) : null}
@@ -315,7 +275,10 @@ function SubagentRow({
                 touch ? "size-7" : "size-5",
               )}
               aria-label={`Stop ${item.title}`}
-              onClick={onStop}
+              onClick={(e) => {
+                e.stopPropagation()
+                onStop?.()
+              }}
             >
               <X className={touch ? "size-3.5" : "size-3"} />
             </button>
@@ -336,8 +299,8 @@ function SubagentRow({
 
           {showDetailInExpanded ? (
             <div className="flex flex-col gap-1">
-              <div className="text-[10.5px] font-medium text-faint">{live ? "Live step" : "Summary"}</div>
-              {live && priorSteps.length > 0 ? (
+              <div className="text-[10.5px] font-medium text-faint">Live step</div>
+              {priorSteps.length > 0 ? (
                 <ul className="flex flex-col gap-0.5">
                   {priorSteps.map((step, idx) => (
                     <li key={`${idx}-${step}`} className="flex items-start gap-1.5 text-[11.5px] text-faint">
@@ -347,9 +310,7 @@ function SubagentRow({
                   ))}
                 </ul>
               ) : null}
-              <div className={cn("leading-snug break-words select-text", live ? "text-foreground" : "text-muted-foreground")}>
-                {activeStep}
-              </div>
+              <div className="leading-snug break-words text-foreground select-text">{activeStep}</div>
             </div>
           ) : null}
 
@@ -374,20 +335,13 @@ function SubagentRow({
                   <span>{copied ? "Copied" : "Copy"}</span>
                 </button>
               </div>
-              <pre
-                className={cn(
-                  "max-h-36 overflow-auto rounded-md border bg-background/80 px-2.5 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words select-text",
-                  item.status === "failed" ? "text-red" : "text-muted-foreground",
-                )}
-              >
+              <pre className="max-h-36 overflow-auto rounded-md border bg-background/80 px-2.5 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words text-muted-foreground select-text">
                 {item.output}
               </pre>
             </div>
           ) : null}
 
-          {!hasBody ? (
-            <div className="text-[11.5px] text-faint">{live ? "Waiting for updates..." : "No output recorded."}</div>
-          ) : null}
+          {!hasBody ? <div className="text-[11.5px] text-faint">Waiting for updates...</div> : null}
 
           {onJump || canStop ? (
             <div className="flex items-center justify-between gap-2 pt-0.5">
@@ -435,7 +389,5 @@ function StatusDot({ status, tracked }: { status: SubagentItem["status"]; tracke
       <CircleDashed className="size-3.5 shrink-0 text-muted-foreground" aria-label="Started" />
     )
   }
-  if (status === "completed") return <Check className="size-3.5 shrink-0 text-green" aria-label="Completed" />
-  if (status === "failed") return <X className="size-3.5 shrink-0 text-red" aria-label="Failed" />
-  return <CircleSlash className="size-3.5 shrink-0 text-faint" aria-label="Stopped" />
+  return <Check className="size-3.5 shrink-0 text-green" aria-label="Completed" />
 }

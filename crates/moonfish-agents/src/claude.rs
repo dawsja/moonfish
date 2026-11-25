@@ -606,6 +606,7 @@ impl Translator {
     fn task(&mut self, v: &Value) {
         let id = v["task_id"].as_str().unwrap_or("").to_string();
         let mut ended = None;
+        let mut sub_events: Vec<ChatEvent> = Vec::new();
         let event = {
             let mut s = self.state.lock().unwrap();
             let changed = match v["subtype"].as_str().unwrap_or("") {
@@ -619,6 +620,22 @@ impl Translator {
                     };
                     t.item_id = v["tool_use_id"].as_str().map(String::from);
                     t.stoppable = true;
+                    if kind == TaskKind::Agent {
+                        if let Some(text) = v["prompt"]
+                            .as_str()
+                            .or_else(|| v["description"].as_str())
+                            .map(str::trim)
+                            .filter(|p| !p.is_empty())
+                        {
+                            sub_events.push(ChatEvent::UserMessage {
+                                id: format!("{id}:init"),
+                                text: text.to_string(),
+                                images: vec![],
+                                files: vec![],
+                            });
+                        }
+                        sub_events.push(ChatEvent::TurnStarted { turn_id: format!("sub-{id}") });
+                    }
                     if bg || kind == TaskKind::Agent {
                         s.tasks.add(t)
                     } else {
@@ -633,6 +650,11 @@ impl Translator {
                     if let (Some(t), Some(d)) = (s.inside.get_mut(&id), &detail) {
                         t.detail = Some(d.clone());
                     }
+                    if is_agent {
+                        if let Some(d) = &detail {
+                            sub_events.push(ChatEvent::Notice { level: NoticeLevel::Info, text: d.clone() });
+                        }
+                    }
                     let title = if is_agent { None } else { v["description"].as_str() };
                     s.tasks.progress(&id, title, detail.as_deref())
                 }
@@ -642,6 +664,15 @@ impl Translator {
                     match status {
                         Some(st) if st != TaskStatus::Running => {
                             s.inside.remove(&id);
+                            if s.tasks.get(&id).is_some_and(|t| t.kind == TaskKind::Agent) {
+                                sub_events.push(ChatEvent::TurnFinished {
+                                    turn_id: format!("sub-{id}"),
+                                    usage: None,
+                                    cost_usd: None,
+                                    duration_ms: None,
+                                    interrupted: st == TaskStatus::Stopped,
+                                });
+                            }
                             s.tasks.finish(&id, st, patch["error"].as_str().map(String::from)).is_some()
                         }
                         _ => {
@@ -658,6 +689,18 @@ impl Translator {
                     s.inside.remove(&id);
                     let st = v["status"].as_str().and_then(task_status).unwrap_or(TaskStatus::Completed);
                     let summary = v["summary"].as_str().filter(|d| !d.is_empty()).map(String::from);
+                    if s.tasks.get(&id).is_some_and(|t| t.kind == TaskKind::Agent) {
+                        if let Some(text) = &summary {
+                            sub_events.push(ChatEvent::Text { item_id: format!("{id}:summary"), text: text.clone() });
+                        }
+                        sub_events.push(ChatEvent::TurnFinished {
+                            turn_id: format!("sub-{id}"),
+                            usage: None,
+                            cost_usd: None,
+                            duration_ms: None,
+                            interrupted: st == TaskStatus::Stopped,
+                        });
+                    }
                     // `task_updated` may have ended it already; the summary is still news.
                     let shown = s.tasks.finish(&id, st, summary.clone()).is_some() || s.tasks.set_detail(&id, summary.clone());
                     if let Some(t) = s.tasks.get(&id).filter(|t| t.background) {
@@ -685,6 +728,9 @@ impl Translator {
             };
             changed.then(|| s.tasks.event())
         };
+        for ev in sub_events {
+            self.emit(ChatEvent::SubagentEvent { task_id: id.clone(), event: Box::new(ev) });
+        }
         if let Some(e) = event {
             self.emit(e);
         }

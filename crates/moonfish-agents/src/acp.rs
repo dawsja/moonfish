@@ -10,7 +10,7 @@
 //! `terminal/*` requests are refused.
 
 use moonfish_transport::Proc;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader, Read};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -35,6 +35,8 @@ pub struct AcpDriver {
     sink: Sink,
     queue: Arc<Mutex<VecDeque<Prompt>>>,
     permission: PermissionMode,
+    launch: StartOptions,
+    subagent_drivers: HashMap<String, AcpDriver>,
 }
 
 #[derive(Default)]
@@ -91,6 +93,9 @@ struct State {
     /// left running (Antigravity's background commands), and shows as a background task.
     open: HashMap<String, ToolCall>,
     tasks: TaskList,
+    location: Location,
+    subagent_sessions: HashMap<String, String>,
+    direct_subagents: HashSet<String>,
 }
 
 /// A form field from an elicitation, and how its answer goes back.
@@ -135,6 +140,7 @@ impl AcpDriver {
             "{:x}",
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0) % 0xffffff
         );
+        let launch = opts.clone();
         let after_plan = if opts.permission == PermissionMode::Plan { PermissionMode::Ask } else { opts.permission };
         let state = Arc::new(Mutex::new(State {
             alive: true,
@@ -142,6 +148,7 @@ impl AcpDriver {
             after_plan,
             nonce,
             kind: Some(kind),
+            location: opts.location.clone(),
             ..Default::default()
         }));
 
@@ -190,7 +197,16 @@ impl AcpDriver {
             });
         }
 
-        let d = AcpDriver { rpc, child, state, sink, queue: Arc::new(Mutex::new(VecDeque::new())), permission: opts.permission };
+        let d = AcpDriver {
+            rpc,
+            child,
+            state,
+            sink,
+            queue: Arc::new(Mutex::new(VecDeque::new())),
+            permission: opts.permission,
+            launch,
+            subagent_drivers: HashMap::new(),
+        };
         let init = d.rpc.call(
             "initialize",
             json!({
@@ -603,7 +619,74 @@ impl Driver for AcpDriver {
         self.apply_mode(mode)
     }
 
+    fn send_subagent(&mut self, task_id: &str, prompt: Prompt) -> DriverResult<()> {
+        let conversation_id = {
+            let mut s = self.state.lock().unwrap();
+            let Some(cid) = s.subagent_sessions.get(task_id).cloned() else {
+                return Err("This subagent cannot be messaged directly.".into());
+            };
+            s.direct_subagents.insert(task_id.to_string());
+            let tasks_event = s.tasks.reopen(task_id).then(|| s.tasks.event());
+            drop(s);
+            if let Some(e) = tasks_event {
+                (self.sink)(e);
+            }
+            cid
+        };
+        if !self.subagent_drivers.contains_key(task_id) {
+            let mut sub_opts = self.launch.clone();
+            sub_opts.resume = Some(conversation_id);
+            let parent_sink = self.sink.clone();
+            let parent_state = self.state.clone();
+            let tid = task_id.to_string();
+            let sub_sink: Sink = Arc::new(move |event: ChatEvent| {
+                let tasks_event = match &event {
+                    ChatEvent::TurnFinished { interrupted, .. } => {
+                        let status = if *interrupted { TaskStatus::Stopped } else { TaskStatus::Completed };
+                        let mut s = parent_state.lock().unwrap();
+                        s.tasks.finish(&tid, status, None).is_some().then(|| s.tasks.event())
+                    }
+                    ChatEvent::Exited { code, .. } => {
+                        let status = if code.is_some_and(|c| c != 0) { TaskStatus::Failed } else { TaskStatus::Completed };
+                        let mut s = parent_state.lock().unwrap();
+                        s.tasks.finish(&tid, status, None).is_some().then(|| s.tasks.event())
+                    }
+                    ChatEvent::Error { message } => {
+                        let mut s = parent_state.lock().unwrap();
+                        s.tasks.finish(&tid, TaskStatus::Failed, Some(first_line(message))).is_some().then(|| s.tasks.event())
+                    }
+                    ChatEvent::ToolStarted { tool, .. } => {
+                        let mut s = parent_state.lock().unwrap();
+                        let detail = if tool.title.is_empty() { tool.name.clone() } else { format!("{} {}", tool.name, tool.title) };
+                        s.tasks.progress(&tid, None, Some(&first_line(&detail))).then(|| s.tasks.event())
+                    }
+                    _ => None,
+                };
+                if !matches!(event, ChatEvent::Started { .. } | ChatEvent::Models { .. } | ChatEvent::Commands { .. }) {
+                    parent_sink(ChatEvent::SubagentEvent { task_id: tid.clone(), event: Box::new(event) });
+                }
+                if let Some(e) = tasks_event {
+                    parent_sink(e);
+                }
+            });
+            let driver = AcpDriver::start(sub_opts, sub_sink)?;
+            self.subagent_drivers.insert(task_id.to_string(), driver);
+        }
+        self.subagent_drivers.get_mut(task_id).unwrap().send(prompt)
+    }
+
+    fn interrupt_subagent(&mut self, task_id: &str) -> DriverResult<()> {
+        if let Some(d) = self.subagent_drivers.get_mut(task_id) {
+            d.interrupt()
+        } else {
+            Err("This subagent can't be interrupted from Moonfish until you message it.".into())
+        }
+    }
+
     fn stop(&mut self) {
+        for (_, mut d) in self.subagent_drivers.drain() {
+            d.stop();
+        }
         self.rpc.stdin.lock().unwrap().take();
         // Stdin closed: it may exit by itself (saving its session); then it and everything it
         // started (commands, servers) end.
@@ -809,34 +892,61 @@ impl Translator {
                 let ok = u["status"] == "completed";
                 let diff = diffs_of(&u["content"]);
                 let output = clip(output_of(u));
-                let (tasks, notice) = {
-                    let mut st = self.state.lock().unwrap();
-                    st.open.remove(&id);
-                    let status = if ok { TaskStatus::Completed } else { TaskStatus::Failed };
-                    let detail = last_line(&output);
-                    if call.kind == ToolKind::Task && st.tasks.get(&id).is_none() && !st.loading {
-                        let mut t = if st.turn_id.is_some() {
-                            BackgroundTask::in_turn(id.clone(), TaskKind::Agent, subagent_title(&call))
-                        } else {
-                            BackgroundTask::running(id.clone(), TaskKind::Agent, subagent_title(&call))
-                        };
-                        t.item_id = Some(id.clone());
-                        st.tasks.add(t);
-                    }
-                    match st.tasks.finish(&id, status, detail) {
-                        Some(t) => {
-                            let notice = t.background.then(|| format!("Background task ended: {}", t.title));
-                            (Some(st.tasks.event()), notice)
+                let launched = if ok && call.kind == ToolKind::Task { parse_subagent_launch(&output) } else { None };
+                if let Some((conv_id, log_path)) = launched {
+                    let (tasks, location, should_watch) = {
+                        let mut st = self.state.lock().unwrap();
+                        st.open.remove(&id);
+                        let loading = st.loading;
+                        if !loading {
+                            let mut t = BackgroundTask::running(id.clone(), TaskKind::Agent, subagent_title(&call));
+                            t.item_id = Some(id.clone());
+                            t.session_id = Some(conv_id.clone());
+                            t.interactive = true;
+                            st.tasks.add(t);
+                            st.tasks.promote_to_background(&id);
+                            st.tasks.set_subagent_session(&id, conv_id.clone(), true);
                         }
-                        None => (None, None),
+                        let first_seen = st.subagent_sessions.insert(id.clone(), conv_id.clone()).is_none();
+                        ((!loading).then(|| st.tasks.event()), st.location.clone(), !loading && first_seen)
+                    };
+                    self.emit(ChatEvent::ToolFinished { item_id: id.clone(), ok, output, diff });
+                    if let Some(tasks) = tasks {
+                        self.emit(tasks);
                     }
-                };
-                self.emit(ChatEvent::ToolFinished { item_id: id, ok, output, diff });
-                if let Some(tasks) = tasks {
-                    self.emit(tasks);
-                }
-                if let Some(text) = notice {
-                    self.emit(ChatEvent::Notice { level: NoticeLevel::Info, text });
+                    if should_watch {
+                        watch_antigravity_subagent(id, conv_id, log_path, location, self.state.clone(), self.sink.clone());
+                    }
+                } else {
+                    let (tasks, notice) = {
+                        let mut st = self.state.lock().unwrap();
+                        st.open.remove(&id);
+                        let status = if ok { TaskStatus::Completed } else { TaskStatus::Failed };
+                        let detail = last_line(&output);
+                        if call.kind == ToolKind::Task && st.tasks.get(&id).is_none() && !st.loading {
+                            let mut t = if st.turn_id.is_some() {
+                                BackgroundTask::in_turn(id.clone(), TaskKind::Agent, subagent_title(&call))
+                            } else {
+                                BackgroundTask::running(id.clone(), TaskKind::Agent, subagent_title(&call))
+                            };
+                            t.item_id = Some(id.clone());
+                            st.tasks.add(t);
+                        }
+                        match st.tasks.finish(&id, status, detail) {
+                            Some(t) => {
+                                let notice = t.background.then(|| format!("Background task ended: {}", t.title));
+                                (Some(st.tasks.event()), notice)
+                            }
+                            None => (None, None),
+                        }
+                    };
+                    self.emit(ChatEvent::ToolFinished { item_id: id, ok, output, diff });
+                    if let Some(tasks) = tasks {
+                        self.emit(tasks);
+                    }
+                    if let Some(text) = notice {
+                        self.emit(ChatEvent::Notice { level: NoticeLevel::Info, text });
+                    }
                 }
             }
             _ => {
@@ -1147,6 +1257,303 @@ fn live_progress(u: &Value, existing_title: &str) -> Option<String> {
         return Some(line);
     }
     u["title"].as_str().map(first_line).filter(|t| !t.is_empty() && t != existing_title && !is_bare_subagent_name(t))
+}
+
+fn parse_subagent_launch(output: &str) -> Option<(String, Option<String>)> {
+    let start = output.find('{')?;
+    let end = output.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    let v: Value = serde_json::from_str(&output[start..=end]).ok()?;
+    let cid = v["conversationId"].as_str().map(str::trim).filter(|s| !s.is_empty())?.to_string();
+    let log_path = v["logAbsoluteUri"].as_str().and_then(file_uri_to_path);
+    Some((cid, log_path))
+}
+
+fn file_uri_to_path(uri: &str) -> Option<String> {
+    let raw = uri.strip_prefix("file://")?;
+    let decoded = percent_decode(raw);
+    let bytes = decoded.as_bytes();
+    if bytes.len() >= 3 && bytes[0] == b'/' && bytes[1].is_ascii_alphabetic() && bytes[2] == b':' {
+        Some(decoded[1..].to_string())
+    } else {
+        Some(decoded)
+    }
+}
+
+fn percent_decode(s: &str) -> String {
+    let mut out = Vec::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(hex) = std::str::from_utf8(&bytes[i + 1..i + 3]) {
+                if let Ok(b) = u8::from_str_radix(hex, 16) {
+                    out.push(b);
+                    i += 3;
+                    continue;
+                }
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+fn sh_path(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix("~/") {
+        format!("\"$HOME\"/{}", sh_quote(rest))
+    } else {
+        sh_quote(path)
+    }
+}
+
+fn clean_system_prompt(raw: &str) -> String {
+    if let Some(after) = raw.split_once("content=").map(|(_, rest)| rest) {
+        let trimmed = after.split("</SYSTEM_MESSAGE>").next().unwrap_or(after).trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+    raw.trim().to_string()
+}
+
+fn unquote_arg(v: &Value) -> Option<String> {
+    let s = v.as_str()?;
+    let trimmed = s.trim();
+    if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+        if let Ok(parsed) = serde_json::from_str::<String>(trimmed) {
+            return Some(parsed);
+        }
+    }
+    Some(trimmed.to_string())
+}
+
+fn subagent_tool_call(tc: &Value) -> ToolCall {
+    let name = tc["name"].as_str().unwrap_or("tool").to_string();
+    let args = tc["args"].clone();
+    let kind = match name.as_str() {
+        "read_file" | "view_file" => ToolKind::Read,
+        "edit_file" | "replace_file_content" | "multi_replace_file_content" => ToolKind::Edit,
+        "write_file" | "write_to_file" => ToolKind::Write,
+        "run_command" => ToolKind::Bash,
+        "search_web" => ToolKind::Web,
+        "grep_search" | "find_by_name" => ToolKind::Search,
+        "invoke_subagent" | "swarm" => ToolKind::Task,
+        _ => ToolKind::Other,
+    };
+    let path = ["Path", "path", "filePath", "file_path"].iter().find_map(|k| unquote_arg(&args[*k])).filter(|s| !s.is_empty());
+    let title = path
+        .clone()
+        .or_else(|| {
+            ["CommandLine", "command", "query", "Query", "Message", "Recipient", "Role"]
+                .iter()
+                .find_map(|k| unquote_arg(&args[*k]))
+                .filter(|s| !s.is_empty())
+        })
+        .map(|s| first_line(&s))
+        .unwrap_or_else(|| name.clone());
+    ToolCall { kind, name, title, input: args, path }
+}
+
+fn read_transcript_lines(location: &Location, path: &str, seen: usize) -> Option<Vec<String>> {
+    match location {
+        Location::Local => {
+            let text = std::fs::read_to_string(path).ok()?;
+            Some(text.lines().skip(seen).map(String::from).collect())
+        }
+        remote => {
+            let p = sh_path(path);
+            let cmd = format!("if [ -f {p} ]; then tail -n +{} {p}; fi", seen + 1);
+            let out = moonfish_transport::run(
+                &Spec { location: remote, cwd: "~", program: "sh", args: vec!["-c".into(), cmd], env: &[] },
+                None,
+                Duration::from_secs(10),
+            )
+            .ok()?;
+            if !out.ok() {
+                return None;
+            }
+            Some(out.stdout.lines().map(String::from).collect())
+        }
+    }
+}
+
+fn watch_antigravity_subagent(
+    task_id: String,
+    conversation_id: String,
+    log_path: Option<String>,
+    location: Location,
+    state: Arc<Mutex<State>>,
+    sink: Sink,
+) {
+    let path = log_path.unwrap_or_else(|| match &location {
+        Location::Local => moonfish_core::paths::home_dir()
+            .join(".gemini")
+            .join("antigravity-cli")
+            .join("brain")
+            .join(&conversation_id)
+            .join(".system_generated")
+            .join("logs")
+            .join("transcript.jsonl")
+            .to_string_lossy()
+            .into_owned(),
+        _ => format!("~/.gemini/antigravity-cli/brain/{conversation_id}/.system_generated/logs/transcript.jsonl"),
+    });
+    thread::spawn(move || {
+        sink(ChatEvent::SubagentEvent {
+            task_id: task_id.clone(),
+            event: Box::new(ChatEvent::TurnStarted { turn_id: format!("sub-{conversation_id}") }),
+        });
+        let mut seen = 0usize;
+        let mut pending_tools: VecDeque<String> = VecDeque::new();
+        let mut missing_ticks = 0u32;
+        loop {
+            {
+                let st = state.lock().unwrap();
+                if !st.alive || st.direct_subagents.contains(&task_id) {
+                    break;
+                }
+            }
+            let Some(lines) = read_transcript_lines(&location, &path, seen) else {
+                missing_ticks += 1;
+                if missing_ticks > 60 {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(500));
+                continue;
+            };
+            missing_ticks = 0;
+            let mut finished: Option<(TaskStatus, Option<String>)> = None;
+            for line in lines {
+                let Ok(v) = serde_json::from_str::<Value>(line.trim()) else {
+                    break;
+                };
+                seen += 1;
+                let step = v["step_index"].as_u64().unwrap_or(seen as u64);
+                let kind = v["type"].as_str().unwrap_or("");
+                let source = v["source"].as_str().unwrap_or("");
+                let status = v["status"].as_str().unwrap_or("");
+                match kind {
+                    "SYSTEM_MESSAGE" if step == 0 => {
+                        if let Some(raw) = v["content"].as_str().filter(|s| !s.trim().is_empty()) {
+                            let text = clean_system_prompt(raw);
+                            sink(ChatEvent::SubagentEvent {
+                                task_id: task_id.clone(),
+                                event: Box::new(ChatEvent::UserMessage {
+                                    id: format!("s{step}"),
+                                    text,
+                                    images: vec![],
+                                    files: vec![],
+                                }),
+                            });
+                        }
+                    }
+                    "USER_INPUT" => {
+                        if let Some(raw) = v["content"].as_str().filter(|s| !s.trim().is_empty()) {
+                            sink(ChatEvent::SubagentEvent {
+                                task_id: task_id.clone(),
+                                event: Box::new(ChatEvent::UserMessage {
+                                    id: format!("s{step}"),
+                                    text: raw.trim().to_string(),
+                                    images: vec![],
+                                    files: vec![],
+                                }),
+                            });
+                        }
+                    }
+                    "PLANNER_RESPONSE" => {
+                        if let Some(thinking) = v["thinking"].as_str().filter(|s| !s.trim().is_empty()) {
+                            sink(ChatEvent::SubagentEvent {
+                                task_id: task_id.clone(),
+                                event: Box::new(ChatEvent::Reasoning { item_id: format!("s{step}:r"), text: thinking.trim().to_string() }),
+                            });
+                        }
+                        let calls = v["tool_calls"].as_array();
+                        if let Some(calls) = calls.filter(|a| !a.is_empty()) {
+                            let mut last_detail = None;
+                            for (j, tc) in calls.iter().enumerate() {
+                                let item_id = format!("s{step}:c{j}");
+                                let tool = subagent_tool_call(tc);
+                                last_detail = Some(format!("{} {}", tool.name, tool.title));
+                                pending_tools.push_back(item_id.clone());
+                                sink(ChatEvent::SubagentEvent {
+                                    task_id: task_id.clone(),
+                                    event: Box::new(ChatEvent::ToolStarted { item_id, tool }),
+                                });
+                            }
+                            if let Some(detail) = last_detail {
+                                let mut st = state.lock().unwrap();
+                                if st.tasks.progress(&task_id, None, Some(&first_line(&detail))) {
+                                    let ev = st.tasks.event();
+                                    drop(st);
+                                    sink(ev);
+                                }
+                            }
+                        }
+                        let content = v["content"].as_str().map(str::trim).filter(|s| !s.is_empty());
+                        if let Some(text) = content {
+                            sink(ChatEvent::SubagentEvent {
+                                task_id: task_id.clone(),
+                                event: Box::new(ChatEvent::Text { item_id: format!("s{step}:t"), text: text.to_string() }),
+                            });
+                        }
+                        let no_calls = calls.is_none_or(|a| a.is_empty());
+                        if no_calls && matches!(status, "DONE" | "ERROR" | "CANCELLED") {
+                            let task_status = match status {
+                                "ERROR" => TaskStatus::Failed,
+                                "CANCELLED" => TaskStatus::Stopped,
+                                _ => TaskStatus::Completed,
+                            };
+                            finished = Some((task_status, content.map(first_line)));
+                        }
+                    }
+                    "GENERIC" if source == "MODEL" => {
+                        if let Some(item_id) = pending_tools.pop_front() {
+                            let output = clip(v["content"].as_str().unwrap_or("").to_string());
+                            let ok = status != "ERROR";
+                            sink(ChatEvent::SubagentEvent {
+                                task_id: task_id.clone(),
+                                event: Box::new(ChatEvent::ToolFinished { item_id, ok, output, diff: None }),
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if let Some((status, detail)) = finished {
+                sink(ChatEvent::SubagentEvent {
+                    task_id: task_id.clone(),
+                    event: Box::new(ChatEvent::TurnFinished {
+                        turn_id: format!("sub-{conversation_id}"),
+                        usage: None,
+                        cost_usd: None,
+                        duration_ms: None,
+                        interrupted: status == TaskStatus::Stopped,
+                    }),
+                });
+                let ev = {
+                    let mut st = state.lock().unwrap();
+                    if st.direct_subagents.contains(&task_id) {
+                        None
+                    } else {
+                        st.tasks.finish(&task_id, status, detail).is_some().then(|| st.tasks.event())
+                    }
+                };
+                if let Some(ev) = ev {
+                    sink(ev);
+                }
+                break;
+            }
+            thread::sleep(Duration::from_millis(600));
+        }
+    });
 }
 
 fn input_title(input: &Value) -> String {

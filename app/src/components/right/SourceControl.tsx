@@ -12,16 +12,30 @@ import { insertNotes } from "@/store/insert"
 import { useNoteCount, useNotes } from "@/store/notes"
 import { BranchPicker } from "./BranchPicker"
 
+/** Unique changed-file count and aggregate line additions/deletions across all change buckets. */
+export function changeTotals(status: Status | null | undefined): { count: number; added: number; removed: number } {
+  if (!status) return { count: 0, added: 0, removed: 0 }
+  const all = [...status.staged, ...status.unstaged, ...status.untracked, ...status.conflicted]
+  const count = new Set(all.map((c) => c.path)).size
+  let added = 0
+  let removed = 0
+  for (const c of all) {
+    added += c.added
+    removed += c.removed
+  }
+  return { count, added, removed }
+}
+
 /** Changes in the workspace: stage, discard, commit, and sync with the remote. */
-export function SourceControl({ scope }: { scope: Scope }) {
+export function SourceControl({ scope, hideBranchBar = false }: { scope: Scope; hideBranchBar?: boolean }) {
   const { status, error, loading } = useStatus(scope)
   if (loading) return <div className="p-4 text-[12px] text-faint">Loading…</div>
   if (error) return <div className="rounded-lg m-3 border border-red/40 bg-del/40 p-3 text-[12px] text-red">{error}</div>
   if (!status?.isRepo) return <div className="rounded-lg m-3 border border-dashed p-3 text-[12px] leading-relaxed text-muted-foreground">This folder isn't a Git repository.</div>
-  return <Panel scope={scope} status={status} />
+  return <Panel scope={scope} status={status} hideBranchBar={hideBranchBar} />
 }
 
-function Panel({ scope, status }: { scope: Scope; status: Status }) {
+function Panel({ scope, status, hideBranchBar }: { scope: Scope; status: Status; hideBranchBar: boolean }) {
   const run = useGit((s) => s.run)
   const busy = useGit((s) => s.busy)
   const [message, setMessage] = useState("")
@@ -41,51 +55,53 @@ function Panel({ scope, status }: { scope: Scope; status: Status }) {
 
   return (
     <div className="flex flex-col">
-      <div className="flex h-9 items-center gap-1.5 border-b px-3 text-[12px]">
-        <BranchPicker scope={scope} status={status} />
-        <span className="ml-auto flex items-center gap-1 font-mono text-[11px] text-muted-foreground">
-          {status.upstream ? (
-            <>
-              <span className={cn("flex items-center", status.behind && "text-cyan")}>
-                <ArrowDown className="size-3" />
-                {status.behind}
-              </span>
-              <span className={cn("flex items-center", status.ahead && "text-foreground")}>
-                <ArrowUp className="size-3" />
-                {status.ahead}
-              </span>
-            </>
-          ) : (
-            <span className="font-sans text-faint">not published</span>
-          )}
-        </span>
-        <DropdownMenu>
-          <Tip content="Sync">
-            <DropdownMenuTrigger asChild>
-              <button className="rounded-md grid size-6 place-items-center text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Sync">
-                <RefreshCw className={cn("size-3.5", busy && "animate-spin")} />
-              </button>
-            </DropdownMenuTrigger>
-          </Tip>
-          <DropdownMenuContent align="end" className="w-44">
-            <DropdownMenuItem onSelect={() => run(scope, "Syncing…", () => git.sync(scope, "sync"))}>
-              <RefreshCw /> Sync: pull and push
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => run(scope, "Pulling…", () => git.sync(scope, "pull"))}>
-              <ArrowDown /> Pull
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => run(scope, "Pushing…", () => git.sync(scope, "push"))}>
-              <ArrowUp /> {status.upstream ? "Push" : "Publish branch"}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => run(scope, "Fetching…", () => git.sync(scope, "fetch"))}>
-              <CloudDownload /> Fetch
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+      {hideBranchBar ? null : (
+        <div className="flex h-9 items-center gap-1.5 border-b px-3 text-[12px]">
+          <BranchPicker scope={scope} status={status} />
+          <span className="ml-auto flex items-center gap-1 font-mono text-[11px] text-muted-foreground">
+            {status.upstream ? (
+              <>
+                <span className={cn("flex items-center", status.behind && "text-cyan")}>
+                  <ArrowDown className="size-3" />
+                  {status.behind}
+                </span>
+                <span className={cn("flex items-center", status.ahead && "text-foreground")}>
+                  <ArrowUp className="size-3" />
+                  {status.ahead}
+                </span>
+              </>
+            ) : (
+              <span className="font-sans text-faint">not published</span>
+            )}
+          </span>
+          <DropdownMenu>
+            <Tip content="Sync">
+              <DropdownMenuTrigger asChild>
+                <button className="rounded-md grid size-6 place-items-center text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Sync">
+                  <RefreshCw className={cn("size-3.5", busy && "animate-spin")} />
+                </button>
+              </DropdownMenuTrigger>
+            </Tip>
+            <DropdownMenuContent align="end" className="w-44">
+              <DropdownMenuItem onSelect={() => run(scope, "Syncing…", () => git.sync(scope, "sync"))}>
+                <RefreshCw /> Sync: pull and push
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => run(scope, "Pulling…", () => git.sync(scope, "pull"))}>
+                <ArrowDown /> Pull
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => run(scope, "Pushing…", () => git.sync(scope, "push"))}>
+                <ArrowUp /> {status.upstream ? "Push" : "Publish branch"}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => run(scope, "Fetching…", () => git.sync(scope, "fetch"))}>
+                <CloudDownload /> Fetch
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      )}
 
-      <div className="border-b p-3">
+      <div className={cn("border-b", hideBranchBar ? "p-2.5" : "p-3")}>
         <div className="relative">
         <textarea
           value={message}
@@ -99,7 +115,7 @@ function Panel({ scope, status }: { scope: Scope; status: Status }) {
               commit()
             }
           }}
-          rows={3}
+          rows={hideBranchBar ? 2 : 3}
           readOnly={writing}
           placeholder={writing ? "Writing a commit message…" : `Press Ctrl+Enter to commit to ${status.branch ?? "HEAD"}`}
           className={cn("rounded-lg block w-full resize-none border border-input bg-background py-2 pr-8 pl-2.5 text-[12.5px] outline-none placeholder:text-faint focus:border-ring/70", writing && "shimmer")}
@@ -162,14 +178,14 @@ function Panel({ scope, status }: { scope: Scope; status: Status }) {
 
       <NotesBar scopeKey={key(scope)} />
       {total === 0 ? <div className="px-3 py-4 text-[12px] text-faint">No changes. The working tree is clean.</div> : null}
-      {status.conflicted.length ? <Section scope={scope} title="Merge conflicts" changes={status.conflicted} kind="conflict" /> : null}
-      {status.staged.length ? <Section scope={scope} title="Staged" changes={status.staged} kind="staged" /> : null}
-      {changes.length ? <Section scope={scope} title="Changes" changes={changes} kind="changes" /> : null}
+      {status.conflicted.length ? <Section scope={scope} title="Merge conflicts" changes={status.conflicted} kind="conflict" compact={hideBranchBar} /> : null}
+      {status.staged.length ? <Section scope={scope} title="Staged" changes={status.staged} kind="staged" compact={hideBranchBar} /> : null}
+      {changes.length ? <Section scope={scope} title="Changes" changes={changes} kind="changes" compact={hideBranchBar} /> : null}
     </div>
   )
 }
 
-function Section({ scope, title, changes, kind }: { scope: Scope; title: string; changes: Change[]; kind: "staged" | "changes" | "conflict" }) {
+function Section({ scope, title, changes, kind, compact }: { scope: Scope; title: string; changes: Change[]; kind: "staged" | "changes" | "conflict"; compact: boolean }) {
   const [open, setOpen] = useState(true)
   const run = useGit((s) => s.run)
   const paths = changes.map((c) => c.path)
@@ -179,7 +195,7 @@ function Section({ scope, title, changes, kind }: { scope: Scope; title: string;
   const removed = changes.reduce((n, c) => n + c.removed, 0)
 
   return (
-    <div className="border-b">
+    <div className="border-b last:border-b-0">
       <div className="group flex h-8 items-center gap-1 pr-2 pl-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
         <button className="flex items-center gap-1 hover:text-foreground" onClick={() => setOpen(!open)}>
           {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
@@ -212,15 +228,15 @@ function Section({ scope, title, changes, kind }: { scope: Scope; title: string;
       </div>
       {/* A gap between rows so a hovered row's fill never touches the selected one's. */}
       {open ? (
-        <div className="flex flex-col gap-0.5">
-          {changes.map((c) => <ChangeRow key={`${kind}-${c.path}`} scope={scope} change={c} staged={kind === "staged"} />)}
+        <div className={cn("flex flex-col gap-0.5", compact && "pb-1.5")}>
+          {changes.map((c) => <ChangeRow key={`${kind}-${c.path}`} scope={scope} change={c} staged={kind === "staged"} compact={compact} />)}
         </div>
       ) : null}
     </div>
   )
 }
 
-function ChangeRow({ scope, change, staged }: { scope: Scope; change: Change; staged: boolean }) {
+function ChangeRow({ scope, change, staged, compact }: { scope: Scope; change: Change; staged: boolean; compact: boolean }) {
   const run = useGit((s) => s.run)
   const viewer = useViewer()
   const open = useGit((s) => s.open)
@@ -233,7 +249,7 @@ function ChangeRow({ scope, change, staged }: { scope: Scope; change: Change; st
 
   return (
     <div
-      className={cn("mx-1 rounded-md group flex h-7 cursor-pointer items-center gap-2 pr-2 pl-6 text-[12.5px] hover:bg-accent", active && "row-active")}
+      className={cn("mx-1 rounded-md group flex h-7 cursor-pointer items-center gap-2 pr-2 text-[12.5px] hover:bg-accent", compact ? "pl-3" : "pl-6", active && "row-active")}
       onClick={() => open({ kind: "diff", path: change.path, staged, untracked })}
     >
       <span className="truncate">{name}</span>

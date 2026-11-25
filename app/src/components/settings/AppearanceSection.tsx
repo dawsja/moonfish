@@ -98,15 +98,15 @@ function FontSelect({ value, fonts, mono, onChange }: { value: string; fonts: st
 function ThemePreview({ theme }: { theme: Theme }) {
   const half = theme === "system"
   const pane = (dark: boolean) => (
-    <div className={cn("flex h-full flex-1", dark ? "bg-[#0c0c0c]" : "bg-[#f6f7f9]")}>
-      <div className={cn("w-1/3 border-r p-1.5", dark ? "border-white/10 bg-[#080808]" : "border-black/10 bg-[#eef0f3]")}>
+    <div className={cn("flex h-full flex-1", dark ? "bg-[#050505]" : "bg-[#f6f7f9]")}>
+      <div className={cn("w-1/3 border-r p-1.5", dark ? "border-white/10 bg-[#000000]" : "border-black/10 bg-[#eef0f3]")}>
         <div className={cn("mb-1 h-1.5 w-3/4", dark ? "bg-white/15" : "bg-black/10")} />
         <div className="mb-1 h-1.5 w-2/3 bg-[#f5b800]" />
         <div className={cn("h-1.5 w-1/2", dark ? "bg-white/15" : "bg-black/10")} />
       </div>
       <div className="flex flex-1 flex-col justify-end p-1.5">
         <div className={cn("mb-1 h-1.5 w-4/5", dark ? "bg-white/20" : "bg-black/15")} />
-        <div className={cn("h-4 rounded-[3px] border", dark ? "border-white/15 bg-[#151515]" : "border-black/15 bg-white")} />
+        <div className={cn("h-4 rounded-[3px] border", dark ? "border-white/15 bg-[#0d0d0d]" : "border-black/15 bg-white")} />
       </div>
     </div>
   )

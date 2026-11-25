@@ -21,6 +21,7 @@ type Layout = {
   sidebarOpen: boolean
   rightWidth: number
   rightOpen: boolean
+  controlCollapsed: boolean
   rightTab: RightTab
 }
 
@@ -55,7 +56,14 @@ type AppStore = {
 }
 
 const LAYOUT_KEY = "moonfish.layout"
-export const defaultLayout: Readonly<Layout> = { sidebarWidth: 272, sidebarOpen: true, rightWidth: 340, rightOpen: true, rightTab: "scm" }
+export const defaultLayout: Readonly<Layout> = {
+  sidebarWidth: 272,
+  sidebarOpen: true,
+  rightWidth: 340,
+  rightOpen: true,
+  controlCollapsed: false,
+  rightTab: "scm",
+}
 
 function loadLayout(): Layout {
   try {
@@ -68,6 +76,7 @@ function loadLayout(): Layout {
       sidebarOpen,
       rightWidth: typeof raw.rightWidth === "number" ? raw.rightWidth : defaultLayout.rightWidth,
       rightOpen: typeof raw.rightOpen === "boolean" ? raw.rightOpen : defaultLayout.rightOpen,
+      controlCollapsed: typeof raw.controlCollapsed === "boolean" ? raw.controlCollapsed : defaultLayout.controlCollapsed,
       rightTab: raw.rightTab === "files" || raw.rightTab === "scm" || raw.rightTab === "history" || raw.rightTab === "pr" ? raw.rightTab : defaultLayout.rightTab,
     }
   } catch {

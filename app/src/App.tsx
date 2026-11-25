@@ -7,7 +7,6 @@ import { RemoteFolderHost } from "@/components/settings/RemoteFolder"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { ChatView } from "@/components/chat/ChatView"
-import { RightPanel } from "@/components/right/RightPanel"
 import { SettingsPage } from "@/components/settings/SettingsPage"
 import { Resizer } from "@/components/shell/Resizer"
 import { Sidebar } from "@/components/shell/Sidebar"
@@ -30,7 +29,6 @@ export function App() {
   const layout = useApp((s) => s.layout)
   const setLayout = useApp((s) => s.setLayout)
   const [resizing, setResizing] = useState(false)
-  const rightShown = view === "chat" && layout.rightOpen
 
   useEffect(() => {
     load().then(() => {
@@ -123,32 +121,6 @@ export function App() {
                 </section>
               )}
             </main>
-            <div
-              aria-hidden={!rightShown}
-              inert={!rightShown}
-              style={{ width: rightShown ? layout.rightWidth + 8 : 0 }}
-              className={cn(
-                "flex shrink-0 justify-start overflow-hidden",
-                !resizing && "transition-[width,opacity] duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
-                !rightShown && "pointer-events-none opacity-0",
-              )}
-            >
-              <Resizer
-                side="right"
-                defaultWidth={defaultLayout.rightWidth}
-                width={layout.rightWidth}
-                min={260}
-                max={640}
-                disabled={!rightShown}
-                onDragChange={setResizing}
-                onWidth={(w) => setLayout({ rightWidth: w })}
-              />
-              <div style={{ width: layout.rightWidth }} className="h-full shrink-0 overflow-clip rounded-lg border bg-background">
-                <ErrorBoundary label="the side panel">
-                  <RightPanel />
-                </ErrorBoundary>
-              </div>
-            </div>
           </div>
         ) : error ? (
           // Settings couldn't be loaded at all: say so, instead of an empty window.

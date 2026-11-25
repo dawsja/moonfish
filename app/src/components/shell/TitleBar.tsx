@@ -48,12 +48,12 @@ export function TitleBar() {
       <PhoneButton />
       <UsageButton />
       {view === "chat" ? (
-        <Tip content="Toggle side panel" side="bottom">
+        <Tip content="Toggle control center" side="bottom">
           <button
             className={cn("rounded-md mr-1 grid size-7 place-items-center hover:bg-accent", layout.rightOpen ? "text-foreground" : "text-muted-foreground")}
-            aria-label="Toggle side panel"
+            aria-label="Toggle control center"
             aria-pressed={layout.rightOpen}
-            onClick={() => setLayout({ rightOpen: !layout.rightOpen })}
+            onClick={() => setLayout(layout.rightOpen ? { rightOpen: false } : { rightOpen: true, controlCollapsed: false })}
           >
             <PanelRight className="size-3.5" />
           </button>

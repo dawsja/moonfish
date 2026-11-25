@@ -1,21 +1,20 @@
 import { useGoalControls } from "./GoalPanel"
 import { supportsGoals } from "@/lib/goals"
 import { useEffect, useMemo, useRef, useState } from "react"
-import { ChevronDown, CornerDownRight, FileText, FolderPlus, Image as ImageIcon, LoaderCircle, MoreHorizontal, Pause, Pencil, Server, Trash2, X } from "lucide-react"
-import { AgentGlyph, Mark } from "@/components/icons"
-import { promptText } from "@/components/Prompt"
+import { ChevronDown, CornerDownRight, FolderPlus, Image as ImageIcon, LoaderCircle, Pause, Pencil, Server, X } from "lucide-react"
+import { Mark } from "@/components/icons"
+import { ControlCenter } from "@/components/right/ControlCenter"
 import { Button } from "@/components/ui/button"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { availableAgents, pickNewChatAgent } from "@/lib/agents"
 import { toast } from "sonner"
 import { emptyTranscript, type ChatMeta, type ModelOption, type QueuedMessage, type SlashCommand, type Transcript as T } from "@/lib/chat"
-import { copyText } from "@/lib/clipboard"
+import type { Scope } from "@/lib/git"
 import { LocationIcon } from "@/components/LocationIcon"
 import { addLocalFolder, OpenProjectMenu, useDistros } from "@/components/OpenProject"
 import { ipc, type Catalog } from "@/lib/ipc"
 import { AGENTS, AGENT_LABEL, locationLabel, type AgentKind, type PermissionMode, type Project } from "@/lib/types"
 import { useApp, useProject } from "@/store/app"
-import { copyChatMarkdown, useChats } from "@/store/chats"
+import { useChats } from "@/store/chats"
 import { draftKey, drafts } from "@/store/drafts"
 import { useGit, useScope } from "@/store/git"
 import { providerLocationKey, useLocationProbes, useProviders } from "@/store/providers"
@@ -29,7 +28,6 @@ import { CwdContext } from "./cwd"
 import { Transcript, useDock, type JumpTarget } from "./Transcript"
 import { isDockTask, TasksDock } from "./TasksDock"
 import { PlanDock } from "./PlanDock"
-import { SubagentsMenu } from "./SubagentsMenu"
 import { SubagentView } from "./SubagentView"
 import { extractSubagents, type SubagentItem } from "@/lib/subagents"
 
@@ -49,11 +47,18 @@ export function ChatView() {
 
   if (!settings) return null
   if (!project) return <NoProject />
-  if (viewer && scope) return <Viewer scope={scope} viewer={viewer} />
+  if (viewer && scope) {
+    return (
+      <div className="relative h-full min-h-0 min-w-0">
+        <Viewer scope={scope} viewer={viewer} />
+        <ControlCenter scope={scope} belowToolbar />
+      </div>
+    )
+  }
   // Keyed, so nothing of one chat (how far it's scrolled, an open dock) carries to the next, and
   // a new chat in another project starts from that project's agent and model.
-  if (chatId && meta && meta.projectId === project.id) return <OpenChat key={meta.id} project={project} meta={meta} transcript={transcript ?? emptyTranscript()} />
-  return <NewChat key={project.id} project={project} />
+  if (chatId && meta && meta.projectId === project.id) return <OpenChat key={meta.id} project={project} meta={meta} transcript={transcript ?? emptyTranscript()} scope={scope} />
+  return <NewChat key={project.id} project={project} scope={scope} />
 }
 
 function useAgentDefaults(project: Project, agent: AgentKind) {
@@ -119,7 +124,7 @@ function useCatalog(agent: AgentKind, projectId: string, live: { models: ModelOp
   return { models, commands, load, error: live.models.length ? null : error }
 }
 
-function NewChat({ project }: { project: Project }) {
+function NewChat({ project, scope }: { project: Project; scope: Scope | null }) {
   const settings = useApp((s) => s.settings)!
   const listChoices = useProviders((s) => s.choices)
   const locationProbes = useLocationProbes(project.location)
@@ -166,8 +171,8 @@ function NewChat({ project }: { project: Project }) {
 
   return (
     <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-clip bg-background">
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 pb-[12vh]">
-        <div className="w-full max-w-[46rem]">
+      <div className="flex min-h-0 flex-1 flex-col justify-center pr-6 pb-[12vh] pl-9">
+        <div className="w-full max-w-[760px]">
           <div className="mb-6 flex items-end gap-3">
             <Mark size={34} />
             <div>
@@ -236,11 +241,12 @@ function NewChat({ project }: { project: Project }) {
           {goals.editor}
         </div>
       </div>
+      <ControlCenter scope={scope} />
     </div>
   )
 }
 
-function OpenChat({ project, meta, transcript }: { project: Project; meta: ChatMeta; transcript: T }) {
+function OpenChat({ project, meta, transcript, scope }: { project: Project; meta: ChatMeta; transcript: T; scope: Scope | null }) {
   const agent = meta.agent
   const d = useAgentDefaults(project, agent)
   const { models, commands, load, error: modelsError } = useCatalog(agent, project.id, transcript)
@@ -286,33 +292,40 @@ function OpenChat({ project, meta, transcript }: { project: Project; meta: ChatM
   return (
     <CwdContext.Provider value={transcript.cwd ?? meta.cwd}>
     {activeSubagent ? (
-      <SubagentView
-        chatId={meta.id}
-        subagent={activeSubagent}
-        onBack={() => setOpenSubagent(null)}
-        onStop={activeSubagent.taskId ? () => void chats.stopTask(meta.id, activeSubagent.taskId!) : undefined}
-      />
+      <div className="relative h-full min-h-0 min-w-0">
+        <SubagentView
+          chatId={meta.id}
+          subagent={activeSubagent}
+          onBack={() => setOpenSubagent(null)}
+          onStop={activeSubagent.taskId ? () => void chats.stopTask(meta.id, activeSubagent.taskId!) : undefined}
+        />
+        <ControlCenter
+          scope={scope}
+          meta={meta}
+          running={transcript.running}
+          subagents={subagents}
+          onStopTask={(taskId) => void chats.stopTask(meta.id, taskId)}
+          onOpenSubagent={(s) => setOpenSubagent(s)}
+          onJumpToItem={(id) => {
+            setOpenSubagent(null)
+            jumpToItem(id)
+          }}
+          belowToolbar
+        />
+      </div>
     ) : (
-    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-clip bg-background">
-      <ChatHeader
-        meta={meta}
-        transcript={transcript}
-        subagents={subagents}
-        onStopTask={(taskId) => void chats.stopTask(meta.id, taskId)}
-        onOpenSubagent={(s) => setOpenSubagent(s)}
-        onJumpToItem={jumpToItem}
-      />
+    <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-clip bg-background">
       <div ref={stage} className="relative min-h-0 flex-1">
-        <Transcript transcript={transcript} jumpTarget={jumpTarget} className="h-full" />
-        <div ref={tray} className="absolute inset-x-0 bottom-0 flex max-h-[75%] min-h-0 flex-col">
+        <Transcript transcript={transcript} jumpTarget={jumpTarget} align="left" className="h-full" />
+        <div ref={tray} className="pointer-events-none absolute inset-x-0 bottom-0 flex max-h-[75%] min-h-0 flex-col">
           {meta.sleeping && !transcript.running ? (
-            <p className="px-6 py-2 text-center text-[12px] text-muted-foreground">
+            <p className="w-full max-w-[820px] py-2 pr-6 pl-9 text-center text-[12px] text-muted-foreground">
               {/* Over the transcript, which scrolls on behind it. */}
-              <span className="rounded-full bg-background px-2 py-0.5">Sleeping · send a message to resume this session.</span>
+              <span className="pointer-events-auto rounded-full bg-background px-2 py-0.5">Sleeping · send a message to resume this session.</span>
             </p>
           ) : null}
-          {/* A little wider than the transcript's text, which goes fully behind it. */}
-          <div className="mx-auto flex min-h-0 w-full max-w-[46rem] flex-col gap-2 px-3 pb-4">
+          {/* Aligned identically with the left-anchored transcript column (36px left margin, 760px width). */}
+          <div className="pointer-events-auto flex min-h-0 w-full max-w-[820px] flex-col gap-2 pr-6 pb-4 pl-9">
             <div ref={dock} className="flex min-h-0 flex-col gap-2 overflow-y-auto overscroll-contain empty:hidden">
               {transcript.plan.length ? <PlanDock items={transcript.plan} /> : null}
               {dockTasks.length ? <TasksDock agent={meta.agent} tasks={dockTasks} onStop={(id) => void chats.stopTask(meta.id, id)} /> : null}
@@ -369,64 +382,18 @@ function OpenChat({ project, meta, transcript }: { project: Project; meta: ChatM
           </div>
         </div>
       </div>
+      <ControlCenter
+        scope={scope}
+        meta={meta}
+        running={transcript.running}
+        subagents={subagents}
+        onStopTask={(taskId) => void chats.stopTask(meta.id, taskId)}
+        onOpenSubagent={(s) => setOpenSubagent(s)}
+        onJumpToItem={jumpToItem}
+      />
     </div>
     )}
     </CwdContext.Provider>
-  )
-}
-
-function ChatHeader({
-  meta,
-  transcript,
-  subagents,
-  onStopTask,
-  onOpenSubagent,
-  onJumpToItem,
-}: {
-  meta: ChatMeta
-  transcript: T
-  subagents: SubagentItem[]
-  onStopTask: (taskId: string) => void
-  onOpenSubagent: (subagent: SubagentItem) => void
-  onJumpToItem: (itemId: string) => void
-}) {
-  return (
-    <div className="flex h-10 shrink-0 items-center gap-2 border-b px-4">
-      <AgentGlyph agent={meta.agent} className="size-3.5 shrink-0" />
-      <span className="truncate text-[13px] font-medium">{meta.title || "New chat"}</span>
-      {transcript.running ? <LoaderCircle className="size-3.5 shrink-0 animate-spin text-muted-foreground" /> : null}
-      <div className="ml-auto flex shrink-0 items-center gap-2">
-        <SubagentsMenu subagents={subagents} onStop={onStopTask} onOpenSubagent={onOpenSubagent} onJumpToItem={onJumpToItem} />
-        <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button className="rounded-md grid size-7 place-items-center text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Chat menu">
-            <MoreHorizontal className="size-4" />
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-auto min-w-56">
-          <DropdownMenuItem
-            onSelect={() => {
-              void promptText({ title: "Rename chat", value: meta.title, confirm: "Rename" }).then((t) => {
-                if (t) void useChats.getState().rename(meta.id, t)
-              })
-            }}
-          >
-            Rename
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => void copyChatMarkdown(meta.id)}>
-            <FileText /> Copy as Markdown
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => copyText(meta.agentSessionId ?? "")} disabled={!meta.agentSessionId}>
-            Copy session ID
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem variant="destructive" onSelect={() => void useChats.getState().confirmRemove(meta.id)}>
-            <Trash2 /> Delete chat
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      </div>
-    </div>
   )
 }
 

@@ -43,10 +43,21 @@ export function useDock(deps: DependencyList = []) {
 export type JumpTarget = { id: string; seq: number }
 
 /** The conversation: user prompts on the right, the agent's work and answers on the left. */
-export function Transcript({ transcript, jumpTarget, className }: { transcript: T; jumpTarget?: JumpTarget | null; className?: string }) {
+export function Transcript({
+  transcript,
+  jumpTarget,
+  align = "center",
+  className,
+}: {
+  transcript: T
+  jumpTarget?: JumpTarget | null
+  align?: "center" | "left"
+  className?: string
+}) {
   const scroller = useRef<HTMLDivElement>(null)
   const frame = useRef<HTMLDivElement>(null)
   const touch = useTouch()
+  const left = align === "left" && !touch
   const [stuck, setStuck] = useState(true)
   const [far, setFar] = useState(false)
   const [jumpingToEnd, setJumpingToEnd] = useState(false)
@@ -254,7 +265,10 @@ export function Transcript({ transcript, jumpTarget, className }: { transcript: 
     <div ref={frame} className={cn("relative min-h-0", className)}>
       <div ref={scroller} className="h-full overflow-x-hidden overflow-y-auto">
         <div
-          className={cn("mx-auto flex w-full max-w-[46rem] flex-col gap-4", touch ? "px-4 pt-4" : "px-6 pt-6")}
+          className={cn(
+            "flex w-full flex-col gap-4",
+            touch ? "mx-auto max-w-[46rem] px-4 pt-4" : left ? "max-w-[820px] pt-6 pr-6 pl-9" : "mx-auto max-w-[46rem] px-6 pt-6",
+          )}
           // `--lead`: room at the top, for a header floating over the transcript (the phone's).
           style={{ paddingTop: `calc(var(--lead, 0px) + ${touch ? "1rem" : "1.5rem"})`, paddingBottom: `calc(var(--dock, 0px) + ${touch ? "1.5rem" : "2.5rem"})` }}
         >
@@ -298,21 +312,28 @@ export function Transcript({ transcript, jumpTarget, className }: { transcript: 
           background: "linear-gradient(transparent, color-mix(in srgb, var(--background) 55%, transparent) 70%, var(--background))",
         }}
       />
-      <button
-        type="button"
-        aria-hidden={stuck || !far || jumpingToEnd}
-        tabIndex={!stuck && far && !jumpingToEnd ? 0 : -1}
+      <div
         style={{ bottom: "calc(var(--dock, 0px) + 0.75rem)" }}
         className={cn(
-          "absolute left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full border bg-popover font-medium whitespace-nowrap text-muted-foreground shadow-lg transition-[opacity,transform,color] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] hover:text-foreground",
-          touch ? "h-10 px-4 text-[13px]" : "h-8 px-3 text-[12px]",
-          !stuck && far && !jumpingToEnd ? "translate-y-0 opacity-100" : "pointer-events-none translate-y-2 opacity-0",
+          "pointer-events-none absolute inset-x-0 flex justify-center",
+          left && "max-w-[820px] pr-6 pl-9",
         )}
-        onClick={jumpToLatest}
       >
-        <ArrowDown className={touch ? "size-4" : "size-3.5"} />
-        <span>Jump to latest</span>
-      </button>
+        <button
+          type="button"
+          aria-hidden={stuck || !far || jumpingToEnd}
+          tabIndex={!stuck && far && !jumpingToEnd ? 0 : -1}
+          className={cn(
+            "flex items-center gap-1.5 rounded-full border bg-popover font-medium whitespace-nowrap text-muted-foreground shadow-lg transition-[opacity,transform,color] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] hover:text-foreground",
+            touch ? "h-10 px-4 text-[13px]" : "h-8 px-3 text-[12px]",
+            !stuck && far && !jumpingToEnd ? "pointer-events-auto translate-y-0 opacity-100" : "pointer-events-none translate-y-2 opacity-0",
+          )}
+          onClick={jumpToLatest}
+        >
+          <ArrowDown className={touch ? "size-4" : "size-3.5"} />
+          <span>Jump to latest</span>
+        </button>
+      </div>
     </div>
   )
 }

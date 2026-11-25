@@ -56,51 +56,51 @@
 }
 
 .dark {
-  --background: #0c0c0c;
-  --foreground: #ededed;
-  --card: #151515;
-  --card-foreground: #ededed;
-  --popover: #151515;
-  --popover-foreground: #ededed;
+  --background: #050505;
+  --foreground: #e8e8e8;
+  --card: #0d0d0d;
+  --card-foreground: #e8e8e8;
+  --popover: #0e0e0e;
+  --popover-foreground: #e8e8e8;
   --primary: #f5b800;
-  --primary-foreground: #0c0c0c;
+  --primary-foreground: #000000;
   --secondary: rgb(255 255 255 / 4%);
-  --secondary-foreground: #ededed;
+  --secondary-foreground: #e8e8e8;
   --muted: rgb(255 255 255 / 4%);
-  --muted-foreground: #a1a1a1;
+  --muted-foreground: #9a9a9a;
   --accent: rgb(255 255 255 / 6%);
-  --accent-foreground: #ededed;
+  --accent-foreground: #e8e8e8;
   --destructive: #f87171;
-  --border: rgb(255 255 255 / 8%);
-  --input: rgb(255 255 255 / 12%);
+  --border: rgb(255 255 255 / 9%);
+  --input: rgb(255 255 255 / 12.5%);
   --ring: rgb(255 255 255 / 45%); /* focus: a gray, not gold; 3:1 or more on every surface */
 
-  --sidebar: #080808;
-  --sidebar-foreground: #ededed;
+  --sidebar: #000000;
+  --sidebar-foreground: #e8e8e8;
   --sidebar-primary: #f5b800;
-  --sidebar-primary-foreground: #0c0c0c;
-  --sidebar-accent: rgb(255 255 255 / 6%);
-  --sidebar-accent-foreground: #ededed;
-  --sidebar-border: rgb(255 255 255 / 8%);
+  --sidebar-primary-foreground: #000000;
+  --sidebar-accent: rgb(255 255 255 / 7%);
+  --sidebar-accent-foreground: #e8e8e8;
+  --sidebar-border: rgb(255 255 255 / 9%);
   --sidebar-ring: rgb(255 255 255 / 22%);
 
-  --moonfish-deep: #080808;
-  --moonfish-faint: #858585;
-  --moonfish-brand: #ededed;
+  --moonfish-deep: #000000;
+  --moonfish-faint: #7a7a7a;
+  --moonfish-brand: #e8e8e8;
   --moonfish-gold: #f5b800;
   --moonfish-cyan: #60a5fa;
   --moonfish-green: #4ade80;
   --moonfish-red: #f87171;
   --moonfish-yellow: #fbbf24;
   --moonfish-orange: #fb923c;
-  --moonfish-code: #ededed;
+  --moonfish-code: #e8e8e8;
   --moonfish-add-bg: color-mix(in srgb, #10b981 14%, transparent);
   --moonfish-del-bg: color-mix(in srgb, #ef4444 14%, transparent);
-  --moonfish-user: #222222;
-  --moonfish-code-bg: rgb(255 255 255 / 7%);
+  --moonfish-user: #181818;
+  --moonfish-code-bg: rgb(255 255 255 / 6.5%);
   --moonfish-pre-fg: #e3e3e3;
   --moonfish-scroll: rgb(255 255 255 / 9%);
-  --moonfish-scroll-hover: rgb(255 255 255 / 14%);
+  --moonfish-scroll-hover: rgb(255 255 255 / 14.5%);
   --moonfish-selection: rgb(245 184 0 / 24%);
   color-scheme: dark;
 }

@@ -2,22 +2,18 @@ import { useEffect, useState } from "react"
 import {
   ArrowDown,
   ArrowUp,
-  Check,
   ChevronDown,
   ChevronRight,
   ChevronUp,
   CloudDownload,
   FileDiff,
   Files as FilesIcon,
-  FileText,
   GitBranch,
-  GitPullRequest,
   History as HistoryIcon,
   LoaderCircle,
   MoreHorizontal,
   RefreshCw,
   Trash2,
-  X,
   type LucideIcon,
 } from "lucide-react"
 import { promptText } from "@/components/Prompt"
@@ -30,12 +26,11 @@ import { git, type Scope, type Status } from "@/lib/git"
 import type { SubagentItem } from "@/lib/subagents"
 import { cn } from "@/lib/utils"
 import { useApp, useProject } from "@/store/app"
-import { copyChatMarkdown, useChats } from "@/store/chats"
+import { useChats } from "@/store/chats"
 import { useGit, useStatus } from "@/store/git"
 import { BranchPicker } from "./BranchPicker"
 import { Files } from "./Files"
 import { History } from "./History"
-import { PullRequest } from "./PullRequest"
 import { changeTotals, SourceControl } from "./SourceControl"
 
 export type ControlCenterProps = {
@@ -49,12 +44,11 @@ export type ControlCenterProps = {
   belowToolbar?: boolean
 }
 
-type ExpandedSection = null | "subagents" | "scm" | "files" | "history" | "pr"
+type ExpandedSection = null | "subagents" | "scm" | "files" | "history"
 
-const WORKSPACE_TOOLS: { id: "files" | "history" | "pr"; label: string; icon: LucideIcon }[] = [
+const WORKSPACE_TOOLS: { id: "files" | "history"; label: string; icon: LucideIcon }[] = [
   { id: "files", label: "Files", icon: FilesIcon },
   { id: "history", label: "History", icon: HistoryIcon },
-  { id: "pr", label: "PR", icon: GitPullRequest },
 ]
 
 /** Solid Composer-matched surface tokens shared by the open card and collapsed corner pill. */
@@ -74,7 +68,7 @@ function useNow(on: boolean): number {
 }
 
 /** Floating solid top-right Control Center: branch/sync, session actions, live subagents,
- *  and inline expandable Source Control, Files, History, and Pull Request views. */
+ *  and inline expandable Source Control, Files, and History views. */
 export function ControlCenter({
   scope,
   meta,
@@ -92,7 +86,6 @@ export function ControlCenter({
   const [expanded, setExpanded] = useState<ExpandedSection>(null)
 
   const runningSubagents = subagents.filter((s) => s.status === "running")
-  const finishedSubagents = subagents.filter((s) => s.status !== "running")
   const stepsById = useSubagentSteps(runningSubagents)
   const now = useNow(layout.rightOpen && !layout.controlCollapsed && expanded === null && runningSubagents.length > 0)
   const totals = changeTotals(status)
@@ -103,8 +96,8 @@ export function ControlCenter({
   }, [scope, expanded])
 
   useEffect(() => {
-    if (expanded === "subagents" && subagents.length === 0) setExpanded(null)
-  }, [expanded, subagents.length])
+    if (expanded === "subagents" && runningSubagents.length === 0) setExpanded(null)
+  }, [expanded, runningSubagents.length])
 
   if (!layout.rightOpen || (!scope && !meta)) return null
 
@@ -221,7 +214,7 @@ export function ControlCenter({
     )
   }
 
-  const workspaceExpanded = expanded === "files" || expanded === "history" || expanded === "pr"
+  const workspaceExpanded = expanded === "files" || expanded === "history"
 
   return (
     <aside
@@ -294,8 +287,8 @@ export function ControlCenter({
         </div>
       </div>
 
-      {/* Section 2: Live Subagents */}
-      {subagents.length > 0 ? (
+      {/* Section 2: Live Subagents (finished ones drop out of the list) */}
+      {runningSubagents.length > 0 ? (
         <div className={cn("flex flex-col border-t", expanded === "subagents" && "min-h-0 flex-1")}>
           <div className="shrink-0 p-1.5">
             <button
@@ -307,27 +300,16 @@ export function ControlCenter({
               aria-expanded={expanded === "subagents"}
               onClick={() => toggle("subagents")}
             >
-              {runningSubagents.length > 0 ? (
-                <span className="ml-0.5 size-[7px] shrink-0 rounded-full bg-green animate-pulse" aria-label="Running" />
-              ) : (
-                <Check className="size-3.5 shrink-0 text-green" aria-label="Completed" />
-              )}
+              <span className="ml-0.5 size-[7px] shrink-0 rounded-full bg-green animate-pulse" aria-label="Running" />
               <span className="font-medium text-foreground">Subagents</span>
-              <span
-                className={cn(
-                  "ml-auto rounded-full border px-1.5 py-px font-mono text-[10px] font-medium",
-                  runningSubagents.length > 0
-                    ? "border-green/30 bg-green/10 text-green"
-                    : "border-border bg-secondary text-muted-foreground",
-                )}
-              >
-                {runningSubagents.length > 0 ? `${runningSubagents.length} running` : `${subagents.length} done`}
+              <span className="ml-auto rounded-full border border-green/30 bg-green/10 px-1.5 py-px font-mono text-[10px] font-medium text-green">
+                {runningSubagents.length} running
               </span>
               <ChevronDown className={cn("size-3 shrink-0 text-faint transition-transform", expanded === "subagents" && "rotate-180")} />
             </button>
 
             {/* Compact live preview rows in resting state */}
-            {expanded === null && runningSubagents.length > 0 ? (
+            {expanded === null ? (
               <div className="mt-0.5 flex flex-col gap-0.5">
                 {runningSubagents.slice(0, 3).map((item) => {
                   const elapsed = item.startedAt !== undefined ? formatDuration(Math.max(0, now - item.startedAt)) : null
@@ -344,51 +326,29 @@ export function ControlCenter({
                     </button>
                   )
                 })}
+                {runningSubagents.length > 3 ? (
+                  <button
+                    type="button"
+                    className="flex h-[26px] w-full items-center rounded-md pr-2 pl-6 text-left text-[11.5px] text-faint hover:bg-accent hover:text-foreground"
+                    onClick={() => toggle("subagents")}
+                  >
+                    +{runningSubagents.length - 3} more
+                  </button>
+                ) : null}
               </div>
             ) : null}
           </div>
 
           {expanded === "subagents" ? (
             <div className="min-h-0 flex-1 overflow-y-auto border-t">
-              {runningSubagents.length > 0 ? (
-                <SubagentsPanel
-                  subagents={runningSubagents}
-                  open
-                  stepsById={stepsById}
-                  onStop={onStopTask}
-                  onOpenSubagent={onOpenSubagent}
-                  onJumpToItem={onJumpToItem}
-                />
-              ) : null}
-              {finishedSubagents.length > 0 ? (
-                <div className={cn("flex flex-col gap-1 p-2", runningSubagents.length > 0 && "border-t")}>
-                  {finishedSubagents.map((item) => {
-                    const dur =
-                      item.startedAt !== undefined && item.endedAt !== undefined
-                        ? formatDuration(Math.max(0, item.endedAt - item.startedAt))
-                        : null
-                    const label = item.status === "completed" ? "done" : item.status
-                    return (
-                      <button
-                        key={item.id}
-                        type="button"
-                        className="flex w-full items-center gap-2 rounded-lg border border-border/60 bg-secondary/40 px-2.5 py-1.5 text-left hover:bg-accent"
-                        onClick={() => (onOpenSubagent ? onOpenSubagent(item) : item.itemId ? onJumpToItem?.(item.itemId) : undefined)}
-                      >
-                        {item.status === "failed" || item.status === "stopped" ? (
-                          <X className="size-3.5 shrink-0 text-red" />
-                        ) : (
-                          <Check className="size-3.5 shrink-0 text-green" />
-                        )}
-                        <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-foreground/90">{item.title}</span>
-                        <span className="shrink-0 font-mono text-[10.5px] text-faint tabular-nums">
-                          {dur ? `${label} · ${dur}` : label}
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
-              ) : null}
+              <SubagentsPanel
+                subagents={runningSubagents}
+                open
+                stepsById={stepsById}
+                onStop={onStopTask}
+                onOpenSubagent={onOpenSubagent}
+                onJumpToItem={onJumpToItem}
+              />
             </div>
           ) : null}
         </div>
@@ -432,20 +392,14 @@ export function ControlCenter({
         </div>
       ) : null}
 
-      {/* Expanded Workspace Panel (Files / History / Pull Request) */}
+      {/* Expanded Workspace Panel (Files / History) */}
       {scope && workspaceExpanded ? (
-        expanded === "pr" ? (
-          <div className="min-h-0 flex-1 overflow-y-auto border-t">
-            <PullRequest scope={scope} />
-          </div>
-        ) : (
-          <div className="flex h-[340px] min-h-0 shrink flex-col overflow-hidden border-t">
-            {expanded === "files" ? <Files scope={scope} /> : <History scope={scope} />}
-          </div>
-        )
+        <div className="flex h-[340px] min-h-0 shrink flex-col overflow-hidden border-t">
+          {expanded === "files" ? <Files scope={scope} /> : <History scope={scope} />}
+        </div>
       ) : null}
 
-      {/* Bottom 3-Segment Workspace Strip */}
+      {/* Bottom Workspace Strip */}
       {scope ? (
         <div className="flex shrink-0 items-center gap-1 border-t p-1.5">
           {WORKSPACE_TOOLS.map((tool) => {
@@ -532,9 +486,6 @@ function SessionMenu({ meta }: { meta: ChatMeta }) {
           }}
         >
           Rename
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => void copyChatMarkdown(meta.id)}>
-          <FileText /> Copy as Markdown
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => copyText(meta.agentSessionId ?? "")} disabled={!meta.agentSessionId}>
           Copy session ID

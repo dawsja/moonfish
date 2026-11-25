@@ -299,7 +299,7 @@ impl Host {
         let meta = json!({
             "id": inner.id("c-new-"), "projectId": project["id"], "agent": agent, "effort": p["effort"].as_str().unwrap_or(""),
             "model": model, "title": "", "cwd": project["path"], "agentSessionId": null, "createdAt": at, "updatedAt": at,
-            "tokens": 0, "costUsd": 0.0, "pinned": false,
+            "tokens": 0, "costUsd": 0.0,
         });
         let started = json!({ "type": "started", "sessionId": null, "model": model, "cwd": project["path"] });
         inner.chats.lock().unwrap().push(Chat {
@@ -434,7 +434,6 @@ impl moonfish_remote::server::Host for Host {
             }),
             "chat.setEffort" => inner.change(chat, |c| c.meta["effort"] = p["effort"].clone()),
             "chat.rename" => inner.change(chat, |c| c.meta["title"] = p["title"].clone()),
-            "chat.pin" => inner.change(chat, |c| c.meta["pinned"] = json!(p["pinned"] == true)),
             "chat.setPermission" => {
                 inner.change(chat, |c| c.meta["permission"] = p["mode"].clone())?;
                 inner.emit(chat, json!({ "type": "permissionChanged", "mode": p["mode"] }));

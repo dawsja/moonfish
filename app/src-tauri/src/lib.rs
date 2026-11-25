@@ -464,20 +464,6 @@ async fn chat_search(app: AppHandle, query: String) -> CmdResult<Vec<moonfish_ag
     .map_err(err)
 }
 
-/// The chat as Markdown for people (an issue, a PR description): its title, what was asked and
-/// answered, one line per tool, failures' output.
-#[tauri::command]
-async fn chat_markdown(app: AppHandle, chat_id: String) -> CmdResult<String> {
-    off_main(app, move |_, state| {
-        let meta = state.chats.store.get(&chat_id).map_err(err)?;
-        let snapshot = state.chats.snapshot(&chat_id)?;
-        let body = moonfish_agents::transcript::render(&snapshot.events);
-        let title = if meta.title.trim().is_empty() { "Chat" } else { meta.title.trim() };
-        Ok(format!("# {title}\n\n{body}\n"))
-    })
-    .await?
-}
-
 /// A new, empty chat in `project_id` (its agent starts with the first message).
 #[tauri::command]
 async fn chat_create(
@@ -660,17 +646,6 @@ async fn chat_rename(app: AppHandle, chat_id: String, title: String) -> CmdResul
     .await?
 }
 
-#[tauri::command]
-async fn chat_pin(app: AppHandle, chat_id: String, pinned: bool) -> CmdResult<ChatMeta> {
-    off_main(app, move |app, state| {
-        let m = state.chats.edit(&chat_id, |m| m.pinned = pinned)?;
-        // Phones list pinned chats first too.
-        state.chats.changed(app);
-        Ok(m)
-    })
-    .await?
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // A file that can't be read is moved aside and reported, never saved over.
@@ -759,7 +734,6 @@ pub fn run() {
             chat_subagent_send,
             chat_subagent_interrupt,
             chat_search,
-            chat_markdown,
             attention::app_set_badge,
             chat_create,
             chat_snapshot,
@@ -778,7 +752,6 @@ pub fn run() {
             chat_sleep,
             chat_delete,
             chat_rename,
-            chat_pin,
             remote_firewall::remote_allow_firewall,
             remote::remote_state,
             remote::remote_set_enabled,
@@ -806,8 +779,6 @@ pub fn run() {
             git::worktree_list,
             git::worktree_create,
             git::worktree_remove,
-            git::pr_state,
-            git::pr_create,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Moonfish")

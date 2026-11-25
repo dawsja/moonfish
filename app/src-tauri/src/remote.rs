@@ -329,12 +329,6 @@ impl Host for AppHost {
                 chats.changed(app);
                 to_value(m)
             }
-            "chat.pin" => {
-                let pinned: bool = param(&p, "pinned")?;
-                let m = chats.edit(&str_param(&p, "chatId")?, |m| m.pinned = pinned)?;
-                chats.changed(app);
-                to_value(m)
-            }
             "chat.sleep" => chats.sleep(app, &str_param(&p, "chatId")?, std::time::Duration::ZERO).map(|_| Value::Null),
             "chat.delete" => {
                 chats.delete(&str_param(&p, "chatId")?)?;

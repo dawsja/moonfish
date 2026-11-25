@@ -7,8 +7,8 @@
 
 A chat-first desktop app for coding agents. Moonfish drives **Claude Code**, **Codex**, and
 **Antigravity** (Google's `agy`) using your existing CLI
-sign-ins. Run chats in your projects locally, in WSL, or over SSH, with git, worktrees and
-pull requests alongside. Built with Rust and Tauri.
+sign-ins. Run chats in your projects locally, in WSL, or over SSH, with git and worktrees
+alongside. Built with Rust and Tauri.
 
 ## What's in it
 
@@ -30,12 +30,11 @@ pull requests alongside. Built with Rust and Tauri.
 - **Side panel.** Files (tree, filter, search in files, add to chat), Source Control (stage,
   discard, commit, branches, push, pull, sync; the sparkle in the message box writes the commit
   message from the changes with the project agent's cheapest model: Haiku, Codex's fast model, or
-  Antigravity's Flash), History (graph), Pull Request (`gh`: open one,
-  review state, checks). In a diff or file it opens, click a line number (drag or Shift+click
+  Antigravity's Flash), and History (graph). In a diff or file it opens, click a line number (drag or Shift+click
   for more lines) to write a note for the agent; "Add notes to chat" puts every note into the
   composer at once, each with its `path:line`, the quoted code and what you wrote, for you to
   send. Notes stay in memory for that workspace until then, or until the branch changes.
-- **WSL.** On Windows, a project can live in a WSL distro. Moonfish runs the agent CLI, git, gh and
+- **WSL.** On Windows, a project can live in a WSL distro. Moonfish runs the agent CLI, git and
   file reads inside the distro (`wsl.exe -d <distro> -e …`), so the agent works on Linux files
   with Linux tools; a Windows copy of a CLI that WSL puts on PATH is never used. Add one from
   the open-project menu and browse the distro's own filesystem (`/`, `/home`, `/etc`…); a
@@ -44,7 +43,7 @@ pull requests alongside. Built with Rust and Tauri.
   distros with what's installed and signed in there; Usage shows a distro's own plan limits.
   A stopped distro is left asleep until you open one of its projects.
 - **SSH hosts.** Hosts from `~/.ssh/config` (with `Include`) or added by hand. A remote project
-  runs the agent CLI, git and gh over `ssh`, so the agent works on that machine's files. On a
+  runs the agent CLI and git over `ssh`, so the agent works on that machine's files. On a
   Linux host (x86-64 or ARM64) Moonfish copies a small helper, `moonfish-host` (about 500 KB, static, no
   download on the host), to `~/.moonfish/bin` the first time, then keeps one connection to it for
   everything on that host. Agents run under it, so a laptop that sleeps or changes networks
@@ -104,7 +103,7 @@ crates/
   moonfish-agents     Claude Code (stream-json), Codex (app-server), Antigravity (ACP)
                       drivers → ChatEvent; sign-in, models and plan limits; a scripted mock
                       (MOONFISH_MOCK_AGENT=1)
-  moonfish-git        git and gh: status, diffs, commits, branches, sync, graph, worktrees, PRs
+  moonfish-git        git: status, diffs, commits, branches, sync, graph, worktrees
   moonfish-remote     phones: pairing (SPAKE2 on a one-time code), encrypted sessions
                       (Noise IK over WebSocket), the desktop's server and the phone's client;
                       alerts.rs decides what the phone's notifications say

@@ -13,7 +13,7 @@ const CHECK: &str = r#"
 printf 'home\t%s\n' "$HOME"
 printf 'os\t%s\n' "$(uname -sm 2>/dev/null)"
 set -f; lin=; oifs=$IFS; IFS=:; for d in $PATH; do case $d in /mnt/[a-z]|/mnt/[a-z]/*) ;; *) lin=${lin:+$lin:}$d;; esac; done; IFS=$oifs; set +f
-for t in git gh claude codex agy; do
+for t in git claude codex agy; do
   p=$(PATH="$lin:$HOME/.local/bin" command -v "$t" 2>/dev/null) || p=
   v=
   [ -n "$p" ] && v=$("$p" --version 2>/dev/null | head -n 1)
@@ -55,7 +55,6 @@ pub struct HostCheck {
     pub home: Option<String>,
     pub os: Option<String>,
     pub git: Tool,
-    pub gh: Tool,
     pub claude: Tool,
     pub codex: Tool,
     /// Antigravity's `agy`.
@@ -112,7 +111,6 @@ pub fn parse_check(out: &str) -> HostCheck {
             "home" => c.home = f.get(1).map(|s| s.to_string()),
             "os" => c.os = f.get(1).filter(|s| !s.is_empty()).map(|s| s.to_string()),
             "git" => c.git = tool(),
-            "gh" => c.gh = tool(),
             "claude" => c.claude = tool(),
             "codex" => c.codex = tool(),
             "agy" => c.antigravity = tool(),
@@ -173,12 +171,12 @@ mod tests {
 
     #[test]
     fn parses_a_check() {
-        let c = parse_check("home\t/home/user\nos\tLinux x86_64\ngit\t/usr/bin/git\tgit version 2.43.0\ngh\t\t\nclaude\t/home/user/.local/bin/claude\t2.1.319 (Claude Code)\ncodex\t\t\n");
+        let c = parse_check("home\t/home/user\nos\tLinux x86_64\ngit\t/usr/bin/git\tgit version 2.43.0\nclaude\t/home/user/.local/bin/claude\t2.1.319 (Claude Code)\ncodex\t\t\n");
         assert!(c.ok);
         assert_eq!(c.home.as_deref(), Some("/home/user"));
         assert_eq!(c.git.version.as_deref(), Some("git version 2.43.0"));
-        assert!(c.gh.path.is_none());
         assert!(c.claude.path.is_some());
+        assert!(c.codex.path.is_none());
         let l = parse_listing("/home/user\n.config\ncode\nApps\n");
         assert_eq!(l.dirs, ["Apps", "code", ".config"]);
     }

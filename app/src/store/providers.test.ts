@@ -49,7 +49,6 @@ const hostCheck = (installed: Partial<Record<AgentKind, boolean>>): HostCheck =>
   home: "/home/dev",
   os: "Linux",
   git: tool("/usr/bin/git"),
-  gh: tool("/usr/bin/gh"),
   claude: tool(installed.claude ? "/usr/local/bin/claude" : null),
   codex: tool(installed.codex ? "/usr/local/bin/codex" : null),
   antigravity: tool(installed.antigravity ? "/usr/local/bin/agy" : null),

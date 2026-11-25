@@ -1,4 +1,4 @@
-import { Files as FilesIcon, GitBranch, GitPullRequest, History as HistoryIcon, type LucideIcon } from "lucide-react"
+import { Files as FilesIcon, GitBranch, History as HistoryIcon, type LucideIcon } from "lucide-react"
 import { Tip } from "@/components/Tip"
 import { changeCount } from "@/lib/git"
 import { cn } from "@/lib/utils"
@@ -6,14 +6,12 @@ import { type RightTab, useApp } from "@/store/app"
 import { useScope, useStatus } from "@/store/git"
 import { Files } from "./Files"
 import { History } from "./History"
-import { PullRequest } from "./PullRequest"
 import { SourceControl } from "./SourceControl"
 
 const TABS: { id: RightTab; label: string; icon: LucideIcon }[] = [
   { id: "files", label: "Files", icon: FilesIcon },
   { id: "scm", label: "Source control", icon: GitBranch },
   { id: "history", label: "History", icon: HistoryIcon },
-  { id: "pr", label: "Pull request", icon: GitPullRequest },
 ]
 
 /** The side panel on the right: files and git for the workspace on screen. */
@@ -56,8 +54,6 @@ export function RightPanel() {
           <Files scope={scope} />
         ) : tab === "history" ? (
           <History scope={scope} />
-        ) : tab === "pr" ? (
-          <PullRequest scope={scope} />
         ) : (
           <SourceControl scope={scope} />
         )}

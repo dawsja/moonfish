@@ -64,8 +64,6 @@ pub struct ChatMeta {
     pub updated_at: u64,
     pub tokens: u64,
     pub cost_usd: f64,
-    /// Listed first in its project, above the unpinned chats.
-    pub pinned: bool,
     pub sleeping: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub goal: Option<Goal>,
@@ -93,7 +91,6 @@ impl Default for ChatMeta {
             updated_at: 0,
             tokens: 0,
             cost_usd: 0.0,
-            pinned: false,
             sleeping: false,
             goal: None,
             queued: Vec::new(),

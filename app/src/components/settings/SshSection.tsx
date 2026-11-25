@@ -434,13 +434,12 @@ const TOOLS = [
   ["codex", "Codex"],
   ["antigravity", "Antigravity"],
   ["git", "git"],
-  ["gh", "gh"],
 ] as const
 
 /** What a host or distro has installed. Agents are optional (any one will do); git is needed. */
 export function ToolGrid({ check, extra }: { check: HostCheck; extra?: (tool: (typeof TOOLS)[number][0]) => React.ReactNode }) {
   return (
-    <div className="grid grid-cols-3 gap-px sm:grid-cols-5 border-t bg-border">
+    <div className="grid grid-cols-2 gap-px sm:grid-cols-4 border-t bg-border">
       {TOOLS.map(([t, name]) => (
         <ToolCell key={t} name={name} tool={check[t]} needed={t === "git"}>
           {extra?.(t)}

@@ -62,7 +62,6 @@ type ChatsStore = {
   /** Asks first ("Delete … ?"), then removes it. */
   confirmRemove(chatId: string): Promise<void>
   rename(chatId: string, title: string): Promise<void>
-  pin(chatId: string, pinned: boolean): Promise<void>
   setPermission(chatId: string, mode: PermissionMode): Promise<void>
   queueAction(chatId: string, command: QueueAction): Promise<boolean>
   /** Sends a queued message now (the first one, without an id). */
@@ -253,10 +252,6 @@ export const useChats = create<ChatsStore>((set, get) => ({
     if (await ipc.chatRename(chatId, title).catch((e) => (toast.error(String(e)), null))) await get().refresh()
   },
 
-  async pin(chatId, pinned) {
-    if (await ipc.chatPin(chatId, pinned).catch((e) => (toast.error(String(e)), null))) await get().refresh()
-  },
-
   async setPermission(chatId, mode) {
     try {
       await ipc.chatSetPermission(chatId, mode)
@@ -282,18 +277,6 @@ export const useChats = create<ChatsStore>((set, get) => ({
     if (item) await get().queueAction(chatId, { action: "send", id: item })
   },
 }))
-
-/** Copies the chat as Markdown (to paste into an issue or a PR description). */
-export async function copyChatMarkdown(chatId: string) {
-  try {
-    const md = await ipc.chatMarkdown(chatId)
-    const { writeText } = await import("@tauri-apps/plugin-clipboard-manager")
-    await writeText(md)
-    toast.success("Copied the chat as Markdown")
-  } catch (e) {
-    toast.error(`Couldn't copy the chat: ${e}`)
-  }
-}
 
 /** Chats whose snapshot is loading, and the events (with their numbers) that came meanwhile. */
 const loading = new Map<string, [number, ChatEvent][]>()

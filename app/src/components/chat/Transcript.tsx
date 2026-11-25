@@ -1,5 +1,5 @@
 import { hideGoalMarkers } from "@/lib/goals"
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DependencyList } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { ArrowDown, Check, ChevronRight, CircleAlert, Copy, Info, ListChecks } from "lucide-react"
 import { blocks, formatDuration, formatTokens, type Decision, type Item, type Transcript as T } from "@/lib/chat"
 import { copyText } from "@/lib/clipboard"
@@ -23,21 +23,21 @@ const JUMP_AFTER = 360
 
 /** For an input that floats on the transcript's end: refs for the box holding both (`stage`) and
  *  the input's (`tray`), whose height goes on the stage as `--dock`, the room the transcript
- *  leaves at its end. `deps`: what puts a different tray on screen. */
-export function useDock(deps: DependencyList = []) {
-  const stage = useRef<HTMLDivElement>(null)
-  const tray = useRef<HTMLDivElement>(null)
+ *  leaves at its end. Callback refs, so a stage or tray that comes back as a new element (the
+ *  chat returning from a subagent's thread) is measured again; without `--dock` the end of the
+ *  transcript stays under the input, out of scrolling's reach. */
+export function useDock() {
+  const [stage, setStage] = useState<HTMLDivElement | null>(null)
+  const [tray, setTray] = useState<HTMLDivElement | null>(null)
   useLayoutEffect(() => {
-    const [box, el] = [stage.current, tray.current]
-    if (!box || !el) return
-    const size = () => box.style.setProperty("--dock", `${el.offsetHeight}px`)
+    if (!stage || !tray) return
+    const size = () => stage.style.setProperty("--dock", `${tray.offsetHeight}px`)
     size()
     const watch = new ResizeObserver(size)
-    watch.observe(el)
+    watch.observe(tray)
     return () => watch.disconnect()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps)
-  return { stage, tray }
+  }, [stage, tray])
+  return { stage: setStage, tray: setTray }
 }
 
 export type JumpTarget = { id: string; seq: number }
@@ -46,18 +46,15 @@ export type JumpTarget = { id: string; seq: number }
 export function Transcript({
   transcript,
   jumpTarget,
-  align = "center",
   className,
 }: {
   transcript: T
   jumpTarget?: JumpTarget | null
-  align?: "center" | "left"
   className?: string
 }) {
   const scroller = useRef<HTMLDivElement>(null)
   const frame = useRef<HTMLDivElement>(null)
   const touch = useTouch()
-  const left = align === "left" && !touch
   const [stuck, setStuck] = useState(true)
   const [far, setFar] = useState(false)
   const [jumpingToEnd, setJumpingToEnd] = useState(false)
@@ -266,8 +263,8 @@ export function Transcript({
       <div ref={scroller} className="h-full overflow-x-hidden overflow-y-auto">
         <div
           className={cn(
-            "flex w-full flex-col gap-4",
-            touch ? "mx-auto max-w-[46rem] px-4 pt-4" : left ? "max-w-[820px] pt-6 pr-6 pl-9" : "mx-auto max-w-[46rem] px-6 pt-6",
+            "flex flex-col gap-4",
+            touch ? "mx-auto w-full max-w-[46rem] px-4 pt-4" : "chat-col px-6 pt-6",
           )}
           // `--lead`: room at the top, for a header floating over the transcript (the phone's).
           style={{ paddingTop: `calc(var(--lead, 0px) + ${touch ? "1rem" : "1.5rem"})`, paddingBottom: `calc(var(--dock, 0px) + ${touch ? "1.5rem" : "2.5rem"})` }}
@@ -314,25 +311,24 @@ export function Transcript({
       />
       <div
         style={{ bottom: "calc(var(--dock, 0px) + 0.75rem)" }}
-        className={cn(
-          "pointer-events-none absolute inset-x-0 flex justify-center",
-          left && "max-w-[820px] pr-6 pl-9",
-        )}
+        className="pointer-events-none absolute inset-x-0"
       >
-        <button
-          type="button"
-          aria-hidden={stuck || !far || jumpingToEnd}
-          tabIndex={!stuck && far && !jumpingToEnd ? 0 : -1}
-          className={cn(
-            "flex items-center gap-1.5 rounded-full border bg-popover font-medium whitespace-nowrap text-muted-foreground shadow-lg transition-[opacity,transform,color] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] hover:text-foreground",
-            touch ? "h-10 px-4 text-[13px]" : "h-8 px-3 text-[12px]",
-            !stuck && far && !jumpingToEnd ? "pointer-events-auto translate-y-0 opacity-100" : "pointer-events-none translate-y-2 opacity-0",
-          )}
-          onClick={jumpToLatest}
-        >
-          <ArrowDown className={touch ? "size-4" : "size-3.5"} />
-          <span>Jump to latest</span>
-        </button>
+        <div className={cn("flex justify-center", touch ? "mx-auto w-full max-w-[46rem] px-4" : "chat-col px-6")}>
+          <button
+            type="button"
+            aria-hidden={stuck || !far || jumpingToEnd}
+            tabIndex={!stuck && far && !jumpingToEnd ? 0 : -1}
+            className={cn(
+              "flex items-center gap-1.5 rounded-full border bg-popover font-medium whitespace-nowrap text-muted-foreground shadow-lg transition-[opacity,transform,color] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] hover:text-foreground",
+              touch ? "h-10 px-4 text-[13px]" : "h-8 px-3 text-[12px]",
+              !stuck && far && !jumpingToEnd ? "pointer-events-auto translate-y-0 opacity-100" : "pointer-events-none translate-y-2 opacity-0",
+            )}
+            onClick={jumpToLatest}
+          >
+            <ArrowDown className={touch ? "size-4" : "size-3.5"} />
+            <span>Jump to latest</span>
+          </button>
+        </div>
       </div>
     </div>
   )

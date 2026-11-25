@@ -102,8 +102,7 @@
         "agentSessionId": null,
         "ago": 2,
         "tokens": 41200,
-        "costUsd": 0.12,
-        "pinned": false
+        "costUsd": 0.12
       },
       "waiting": "approval",
       "events": [
@@ -235,8 +234,7 @@
         "agentSessionId": null,
         "ago": 14,
         "tokens": 9800,
-        "costUsd": 0.03,
-        "pinned": false
+        "costUsd": 0.03
       },
       "waiting": "question",
       "events": [
@@ -326,8 +324,7 @@
         "agentSessionId": null,
         "ago": 190,
         "tokens": 53940,
-        "costUsd": 0.21,
-        "pinned": true
+        "costUsd": 0.21
       },
       "waiting": null,
       "events": [
@@ -442,8 +439,7 @@
         "agentSessionId": null,
         "ago": 1500,
         "tokens": 19020,
-        "costUsd": 0.07,
-        "pinned": false
+        "costUsd": 0.07
       },
       "waiting": null,
       "events": [

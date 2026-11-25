@@ -140,4 +140,4 @@ export type AccountUsage = {
 
 /** `windows`: not installed there, but a Windows copy is on WSL's PATH (where). */
 export type Tool = { path: string | null; version: string | null; windows: string | null }
-export type HostCheck = { ok: boolean; error: string | null; home: string | null; os: string | null; git: Tool; gh: Tool; claude: Tool; codex: Tool; antigravity: Tool }
+export type HostCheck = { ok: boolean; error: string | null; home: string | null; os: string | null; git: Tool; claude: Tool; codex: Tool; antigravity: Tool }

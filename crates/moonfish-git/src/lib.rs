@@ -1,9 +1,8 @@
-//! Git for the side panel and worktrees, through the `git` and `gh` CLIs run where the project
+//! Git for the side panel and worktrees, through the `git` CLI run where the project
 //! is ([`moonfish_transport`]), so a project on an SSH host works the same as a local one.
 //!
 //! Every function takes a [`Repo`] (where and which folder) and returns plain data for the UI.
 
-pub mod github;
 mod graph;
 mod parse;
 pub mod worktree;

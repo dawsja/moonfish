@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { ChevronDown, ChevronRight, Copy, FileText, FolderOpen, FolderPlus, GitBranch, GitBranchPlus, ListChecks, LoaderCircle, MessageCircleQuestion, MoreHorizontal, Moon, Pencil, Pin, PinOff, Plus, Search, Settings, ShieldQuestion, SquarePen, Trash2 } from "lucide-react"
+import { ChevronDown, ChevronRight, Copy, FolderOpen, FolderPlus, GitBranch, GitBranchPlus, ListChecks, LoaderCircle, MessageCircleQuestion, MoreHorizontal, Moon, Pencil, Plus, Search, Settings, ShieldQuestion, SquarePen, Trash2 } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
 import { AgentGlyph } from "@/components/icons"
 import { confirmAction, promptText } from "@/components/Prompt"
@@ -17,7 +17,7 @@ import type { Project } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 import { useApp } from "@/store/app"
-import { copyChatMarkdown, needsYou, useChats, waitingOf } from "@/store/chats"
+import { needsYou, useChats, waitingOf } from "@/store/chats"
 import { openChatSearch } from "./ChatSearch"
 import { UpdateButton } from "./Updates"
 import { useGit } from "@/store/git"
@@ -152,8 +152,8 @@ function ProjectGroup({ project }: { project: Project }) {
     if (awake) useGit.getState().loadWorktrees(project.id)
   }, [project.id, awake])
 
-  // Pinned chats first; otherwise the store's order (newest activity first).
-  const chats = metas.filter((m) => m.projectId === project.id).sort((a, b) => Number(b.pinned) - Number(a.pinned))
+  // The store's order: newest activity first.
+  const chats = metas.filter((m) => m.projectId === project.id)
   const extra = (trees ?? []).filter((w) => !w.main)
   const inMain = (m: ChatMeta) => !extra.some((w) => samePath(m.cwd, w.path))
   // With worktrees listed, the main checkout's row shows the selection instead.
@@ -363,23 +363,16 @@ function ChatRow({ meta, indent }: { meta: ChatMeta; indent: number }) {
             <AgentGlyph agent={meta.agent} className="size-3 shrink-0 opacity-70" />
           )}
           <span className="truncate">{meta.title || "New chat"}</span>
-          {meta.pinned ? <Pin className="ml-auto size-3 shrink-0 text-faint" aria-label="Pinned" /> : null}
-          <span className={cn("shrink-0 font-mono text-[10.5px] text-faint", !meta.pinned && "ml-auto")}>{ago(meta.updatedAt)}</span>
+          <span className="ml-auto shrink-0 font-mono text-[10.5px] text-faint">{ago(meta.updatedAt)}</span>
         </div>
       </ContextMenuTrigger>
       {/* React bubbles portal clicks to the row, whose onClick would open the chat. */}
       <ContextMenuContent className="w-48" onClick={(e) => e.stopPropagation()}>
-        <ContextMenuItem onSelect={() => useChats.getState().pin(meta.id, !meta.pinned)}>
-          {meta.pinned ? <PinOff /> : <Pin />} {meta.pinned ? "Unpin" : "Pin"}
-        </ContextMenuItem>
         <ContextMenuItem disabled={meta.sleeping || running || background || !!waits || !meta.agentSessionId} onSelect={() => useChats.getState().sleep(meta.id)}>
           <Moon /> {meta.sleeping ? "Sleeping" : "Sleep"}
         </ContextMenuItem>
         <ContextMenuItem onSelect={rename}>
-          <Pencil /> Rename…
-        </ContextMenuItem>
-        <ContextMenuItem onSelect={() => void copyChatMarkdown(meta.id)}>
-          <FileText /> Copy as Markdown
+          <Pencil /> Rename
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem variant="destructive" onSelect={() => void useChats.getState().confirmRemove(meta.id)}>

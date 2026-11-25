@@ -101,8 +101,6 @@ export type ChatMeta = {
   sleeping?: boolean
   goal?: Goal | null
   queued?: QueuedMessage[]
-  /** Listed first in its project. */
-  pinned: boolean
   /** The mode it last ran with; absent: the agent's default in Settings → Providers. */
   permission?: PermissionMode
 }

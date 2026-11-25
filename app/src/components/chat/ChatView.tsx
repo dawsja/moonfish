@@ -30,6 +30,10 @@ import { isDockTask, TasksDock } from "./TasksDock"
 import { PlanDock } from "./PlanDock"
 import { SubagentView } from "./SubagentView"
 import { extractSubagents, type SubagentItem } from "@/lib/subagents"
+import { cn } from "@/lib/utils"
+
+/** The plan, background work and queue pills sit a little in from the composer's edges. */
+const DOCK_PILL = "mx-auto w-[calc(100%-6rem)]"
 
 /** The active chat, a new chat in the active project, or a file/diff viewer. */
 export function ChatView() {
@@ -165,14 +169,15 @@ function NewChat({ project, scope }: { project: Project; scope: Scope | null }) 
     }
     return useChats.getState().send(null, goal.objective, { agent, model: model ?? undefined, effort: effort || undefined, fastMode, permission, cwd: draftCwd ?? undefined, goal })
   })
+  const controlOpen = useApp((s) => s.layout.rightOpen && !s.layout.controlCollapsed) && !!scope
   // On this computer, whether the chosen agent's CLI is there at all: said before the first
   // message fails, with the way to install it.
   const installed = project.location.kind === "local" ? (locationProbes.probes[agent]?.found ?? null) : null
 
   return (
-    <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-clip bg-background">
-      <div className="flex min-h-0 flex-1 flex-col justify-center pr-6 pb-[12vh] pl-9">
-        <div className="w-full max-w-[760px]">
+    <div className="chat-stage relative flex h-full min-h-0 min-w-0 flex-col overflow-clip bg-background" data-control-open={controlOpen || undefined}>
+      <div className="flex min-h-0 flex-1 flex-col justify-center pb-[12vh]">
+        <div className="chat-col px-6">
           <div className="mb-6 flex items-end gap-3">
             <Mark size={34} />
             <div>
@@ -283,6 +288,7 @@ function OpenChat({ project, meta, transcript, scope }: { project: Project; meta
   const jumpSeq = useRef(0)
   const jumpToItem = (id: string) => setJumpTarget({ id, seq: ++jumpSeq.current })
 
+  const controlOpen = useApp((s) => s.layout.rightOpen && !s.layout.controlCollapsed)
   const activeSubagent = useMemo(() => {
     if (!openSubagent) return null
     const id = openSubagent.taskId ?? openSubagent.id
@@ -292,7 +298,7 @@ function OpenChat({ project, meta, transcript, scope }: { project: Project; meta
   return (
     <CwdContext.Provider value={transcript.cwd ?? meta.cwd}>
     {activeSubagent ? (
-      <div className="relative h-full min-h-0 min-w-0">
+      <div className="chat-stage relative h-full min-h-0 min-w-0" data-control-open={controlOpen || undefined}>
         <SubagentView
           chatId={meta.id}
           subagent={activeSubagent}
@@ -314,21 +320,20 @@ function OpenChat({ project, meta, transcript, scope }: { project: Project; meta
         />
       </div>
     ) : (
-    <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-clip bg-background">
+    <div className="chat-stage relative flex h-full min-h-0 min-w-0 flex-col overflow-clip bg-background" data-control-open={controlOpen || undefined}>
       <div ref={stage} className="relative min-h-0 flex-1">
-        <Transcript transcript={transcript} jumpTarget={jumpTarget} align="left" className="h-full" />
+        <Transcript transcript={transcript} jumpTarget={jumpTarget} className="h-full" />
         <div ref={tray} className="pointer-events-none absolute inset-x-0 bottom-0 flex max-h-[75%] min-h-0 flex-col">
           {meta.sleeping && !transcript.running ? (
-            <p className="w-full max-w-[820px] py-2 pr-6 pl-9 text-center text-[12px] text-muted-foreground">
+            <p className="chat-col px-6 py-2 text-center text-[12px] text-muted-foreground">
               {/* Over the transcript, which scrolls on behind it. */}
               <span className="pointer-events-auto rounded-full bg-background px-2 py-0.5">Sleeping · send a message to resume this session.</span>
             </p>
           ) : null}
-          {/* Aligned identically with the left-anchored transcript column (36px left margin, 760px width). */}
-          <div className="pointer-events-auto flex min-h-0 w-full max-w-[820px] flex-col gap-2 pr-6 pb-4 pl-9">
+          <div className="chat-col pointer-events-auto flex min-h-0 flex-col gap-2 px-6 pb-4">
             <div ref={dock} className="flex min-h-0 flex-col gap-2 overflow-y-auto overscroll-contain empty:hidden">
-              {transcript.plan.length ? <PlanDock items={transcript.plan} /> : null}
-              {dockTasks.length ? <TasksDock agent={meta.agent} tasks={dockTasks} onStop={(id) => void chats.stopTask(meta.id, id)} /> : null}
+              {transcript.plan.length ? <PlanDock items={transcript.plan} className={DOCK_PILL} /> : null}
+              {dockTasks.length ? <TasksDock agent={meta.agent} tasks={dockTasks} onStop={(id) => void chats.stopTask(meta.id, id)} className={DOCK_PILL} /> : null}
               {transcript.questions[0] ? (
                 <div data-waiting className="rounded-2xl flex min-h-0 flex-col">
                   <QuestionCard request={transcript.questions[0]} onAnswer={(a) => chats.answerQuestion(meta.id, transcript.questions[0].requestId, a)} />
@@ -403,7 +408,7 @@ function QueueDock({ chatId, items, running, goal }: { chatId: string; items: Qu
   const waitsForGoal = goal && goal.status !== "complete"
   const holding = waitsForGoal ? goal.status !== "active" : !running
   return (
-    <div className="mx-auto w-[calc(100%-3rem)] max-w-[40rem] rounded-t-lg border border-b-0 bg-card text-[12.5px]">
+    <div className={cn(DOCK_PILL, "rounded-t-lg border border-b-0 bg-card text-[12.5px]")}>
       <div className="flex h-6 items-center gap-1.5 px-3 pt-1 text-[10.5px] text-muted-foreground">
         {holding ? <Pause className="size-3" /> : null}
         <span className="font-medium text-foreground">{items.length} queued</span>

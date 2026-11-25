@@ -7,7 +7,7 @@ import { BASE_UI_SIZE, type AppInfo, type Appearance, type Location, type Settin
 import type { Viewer } from "./git"
 
 export type SettingsSection = "sessions" | "providers" | "appearance" | "usage" | "ssh" | "projects" | "phone"
-export type RightTab = "files" | "scm" | "history" | "pr"
+export type RightTab = "files" | "scm" | "history"
 
 export type ActiveTarget = Partial<{
   projectId: string | null
@@ -77,7 +77,7 @@ function loadLayout(): Layout {
       rightWidth: typeof raw.rightWidth === "number" ? raw.rightWidth : defaultLayout.rightWidth,
       rightOpen: typeof raw.rightOpen === "boolean" ? raw.rightOpen : defaultLayout.rightOpen,
       controlCollapsed: typeof raw.controlCollapsed === "boolean" ? raw.controlCollapsed : defaultLayout.controlCollapsed,
-      rightTab: raw.rightTab === "files" || raw.rightTab === "scm" || raw.rightTab === "history" || raw.rightTab === "pr" ? raw.rightTab : defaultLayout.rightTab,
+      rightTab: raw.rightTab === "files" || raw.rightTab === "scm" || raw.rightTab === "history" ? raw.rightTab : defaultLayout.rightTab,
     }
   } catch {
     return defaultLayout

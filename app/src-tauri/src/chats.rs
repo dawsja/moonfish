@@ -541,7 +541,7 @@ impl Chats {
         }
         {
             let mut metas = self.metas.lock().unwrap();
-            // Rename and pin can arrive from another device while the agent starts.
+            // A rename can arrive from another device while the agent starts.
             let mut latest = self.store.get(chat_id).map_err(crate::err)?;
             if latest.sleeping {
                 latest.sleeping = false;
@@ -989,7 +989,7 @@ impl Chats {
         self.restart.lock().unwrap().remove(chat_id);
         self.logs.lock().unwrap().remove(chat_id);
         self.subagents.lock().unwrap().retain(|(cid, _), _| cid != chat_id);
-        // A rename or pin already saving must finish before the chat directory is removed.
+        // A rename already saving must finish before the chat directory is removed.
         let _metas = self.metas.lock().unwrap();
         self.store.delete(chat_id).map_err(|e| e.to_string())
     }

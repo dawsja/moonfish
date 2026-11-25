@@ -39,7 +39,7 @@
     ],
     "category": "DeveloperTool",
     "shortDescription": "Moonfish, a desktop app for coding agents",
-    "longDescription": "A chat-first desktop app for Claude Code, Codex, and Antigravity on this computer or over SSH, with built-in Git, worktrees, and pull requests.",
+    "longDescription": "A chat-first desktop app for Claude Code, Codex, and Antigravity on this computer or over SSH, with built-in Git and worktrees.",
     "copyright": "MIT License",
     "icon": [
       "icons/32x32.png",

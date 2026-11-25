@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from "react"
-import { ChevronDown, ChevronRight, FlaskConical, Gauge, ListChecks, Loader2, MessageCircleQuestion, Moon, Pencil, Pin, PinOff, SquarePen, SquareTerminal, Trash2 } from "lucide-react"
+import { ChevronDown, ChevronRight, FlaskConical, Gauge, ListChecks, Loader2, MessageCircleQuestion, Moon, Pencil, SquarePen, SquareTerminal, Trash2 } from "lucide-react"
 import { LocationIcon } from "@/components/LocationIcon"
 import { AgentGlyph, Mark } from "@/components/icons"
 import type { ChatMeta } from "@/lib/chat"
@@ -81,7 +81,6 @@ function CardMeta({ meta, project, waiting }: { meta: ChatMeta; project: Project
       <span className="text-faint">·</span>
       <AgentGlyph agent={meta.agent} className="size-3.5 shrink-0" />
       {waiting ? null : <span className="shrink-0">{AGENT_LABEL[meta.agent]}</span>}
-      {meta.pinned ? <Pin className="size-3 shrink-0 text-faint" aria-label="Pinned" /> : null}
       {meta.sleeping ? <Moon className="size-3 shrink-0 text-faint" aria-label="Asleep" /> : null}
       <span className="ml-auto shrink-0 pl-1 font-mono text-[11px] text-faint">{busy && !waiting ? <Loader2 className="size-3.5 animate-spin" aria-label="Working" /> : ago(meta.updatedAt)}</span>
     </span>
@@ -203,7 +202,7 @@ function ChatCard({ meta, project, onMenu }: { meta: ChatMeta; project: Project 
   )
 }
 
-/** A chat's menu (hold its card, or ⋯ in it): pin, sleep, rename, delete. */
+/** A chat's menu (hold its card, or ⋯ in it): sleep, rename, delete. */
 export function ChatMenu({ meta, onClose, onDeleted }: { meta: ChatMeta | null; onClose: () => void; onDeleted?: () => void }) {
   const busy = useMobile((s) => (meta ? s.busy.includes(meta.id) : false))
   const waiting = useMobile((s) => (meta ? !!s.waiting[meta.id] : false))
@@ -272,11 +271,7 @@ export function ChatMenu({ meta, onClose, onDeleted }: { meta: ChatMeta | null; 
         </form>
       ) : (
         <div className="px-3 pb-1">
-          <div className="grid grid-cols-3 gap-1.5">
-            <button className={tile} disabled={!connected} onClick={() => (void st.pin(meta.id, !meta.pinned), onClose())}>
-              {meta.pinned ? <PinOff className="size-5 text-muted-foreground" /> : <Pin className="size-5 text-muted-foreground" />}
-              {meta.pinned ? "Unpin" : "Pin"}
-            </button>
+          <div className="grid grid-cols-2 gap-1.5">
             <button className={tile} disabled={!connected || !!sleepBlocked} onClick={() => (void st.sleep(meta.id), onClose())}>
               <Moon className="size-5 text-muted-foreground" />
               <span>Sleep{sleepBlocked ? <span className="block text-[11px] text-muted-foreground">{sleepBlocked}</span> : null}</span>
@@ -337,7 +332,7 @@ export function ChatsScreen({ usage }: { usage: boolean }) {
 
   const shown = filter === "all" || !project ? metas : metas.filter((m) => m.projectId === filter)
   const needsYou = shown.filter((m) => waiting[m.id])
-  const rest = useMemo(() => shown.filter((m) => !waiting[m.id]).sort((a, b) => Number(b.pinned) - Number(a.pinned)), [shown, waiting])
+  const rest = useMemo(() => shown.filter((m) => !waiting[m.id]), [shown, waiting])
   const busyCount = useMobile((s) => s.busy.filter((id) => !s.waiting[id]).length)
   const summary = [needsYou.length ? `${needsYou.length} need${needsYou.length === 1 ? "s" : ""} you` : null, busyCount ? `${busyCount} working` : null].filter(Boolean).join(" · ")
 
@@ -451,7 +446,7 @@ export function ChatsScreen({ usage }: { usage: boolean }) {
       </PullSheet>
       {usage ? <UsageSheet /> : null}
       <NewChatSheet open={newChat} initial={initialProject} onClose={() => setNewChat(false)} />
-      {/* The newest copy of the chat, so pin and sleep show what they are now. */}
+      {/* The newest copy of the chat, so sleep shows what it is now. */}
       <ChatMenu meta={menu ? (metas.find((m) => m.id === menu.id) ?? null) : null} onClose={() => setMenu(null)} />
     </div>
   )

@@ -1,6 +1,6 @@
 [package]
 name = "moonfish-git"
-description = "Moonfish: git and GitHub for the side panel and worktrees, through the git and gh CLIs"
+description = "Moonfish: git for the side panel and worktrees, through the git CLI"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,7 +9,6 @@ license.workspace = true
 moonfish-core.workspace = true
 moonfish-transport.workspace = true
 serde.workspace = true
-serde_json.workspace = true
 base64 = "0.22"
 
 [dev-dependencies]

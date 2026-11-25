@@ -183,9 +183,8 @@ fn kind_label(kind: AgentKind) -> &'static str {
     kind.label()
 }
 
-// ---- Worktrees and pull requests -------------------------------------------------------------
+// ---- Worktrees -------------------------------------------------------------------------------
 
-use moonfish_git::github::{self, PrState};
 use moonfish_git::worktree::{self, Worktree};
 
 #[tauri::command]
@@ -218,22 +217,4 @@ pub async fn worktree_remove(app: AppHandle, project_id: String, path: String, f
         s.projects.iter().find(|p| p.id == project_id).map(|p| p.git.delete_branch_on_remove).unwrap_or(false)
     };
     with(app, project_id, None, move |r| worktree::remove(r, &path, force, delete_branch)).await
-}
-
-#[tauri::command]
-pub async fn pr_state(app: AppHandle, project_id: String, cwd: Option<String>) -> CmdResult<PrState> {
-    with(app, project_id, cwd, |r| Ok(github::pr_state(r))).await
-}
-
-#[tauri::command]
-pub async fn pr_create(
-    app: AppHandle,
-    project_id: String,
-    cwd: Option<String>,
-    title: String,
-    body: String,
-    base: String,
-    draft: bool,
-) -> CmdResult<String> {
-    with(app, project_id, cwd, move |r| github::pr_create(r, &title, &body, &base, draft)).await
 }

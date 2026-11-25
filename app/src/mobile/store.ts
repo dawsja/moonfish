@@ -64,7 +64,6 @@ type Store = {
   compact(chatId: string): Promise<void>
   clear(chatId: string): Promise<void>
   rename(chatId: string, title: string): Promise<void>
-  pin(chatId: string, pinned: boolean): Promise<void>
   /** Ends the agent's process; the next message resumes the session. */
   sleep(chatId: string): Promise<void>
   remove(chatId: string): Promise<void>
@@ -300,10 +299,6 @@ export const useMobile = create<Store>((set, get) => ({
 
   async rename(chatId, title) {
     const next = await api.rename(chatId, title).catch((e) => (fail(e), null))
-    if (next) await get().refresh()
-  },
-  async pin(chatId, pinned) {
-    const next = await api.pin(chatId, pinned).catch((e) => (fail(e), null))
     if (next) await get().refresh()
   },
   async sleep(chatId) {

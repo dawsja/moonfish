@@ -100,8 +100,6 @@ pub const HOST_METHODS: &[&str] = &[
     "chat.readImage",
     // {chatId, title} → meta
     "chat.rename",
-    // {chatId, pinned} → meta
-    "chat.pin",
     // {chatId}: ends the agent's process; the next message resumes the session
     "chat.sleep",
     // {chatId}

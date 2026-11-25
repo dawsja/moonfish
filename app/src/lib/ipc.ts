@@ -48,8 +48,6 @@ export const ipc = {
   chatSubagentInterrupt: (chatId: string, taskId: string) => call<void>("chat_subagent_interrupt", { chatId, taskId }),
   /** Chats whose text has every word of `query`, newest first. */
   chatSearch: (query: string) => call<SearchHit[]>("chat_search", { query }),
-  /** The chat as Markdown, for an issue or a PR description. */
-  chatMarkdown: (chatId: string) => call<string>("chat_markdown", { chatId }),
   /** The taskbar/dock badge and window title: how many chats wait (`icon`: Windows' overlay, square RGBA). */
   setBadge: (count: number, icon: number[] | null) => call<void>("app_set_badge", { count, icon }),
   chatCreate: (projectId: string, agent: AgentKind | null, model: string | null, effort: string | null, cwd: string | null, fastMode?: boolean | null) =>
@@ -74,7 +72,6 @@ export const ipc = {
   chatSleep: (chatId: string) => call<void>("chat_sleep", { chatId }),
   chatDelete: (chatId: string) => call<void>("chat_delete", { chatId }),
   chatRename: (chatId: string, title: string) => call<ChatMeta>("chat_rename", { chatId, title }),
-  chatPin: (chatId: string, pinned: boolean) => call<ChatMeta>("chat_pin", { chatId, pinned }),
 }
 
 /** Calls `fn` for every chat event the app emits (`seq`: its number in the chat, as in a

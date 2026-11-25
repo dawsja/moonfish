@@ -200,6 +200,30 @@
 
   .row-active { background: var(--sidebar-accent); color: var(--foreground); }
 
+  /* Chat reading column: centered when there's room, smoothly yielding left to stay clear
+     of the floating Control Center on medium windows. */
+  .chat-stage {
+    container: chat-stage / inline-size;
+    width: 100%;
+  }
+  .chat-col {
+    --chat-max: 54rem;
+    --chat-right: 0px;
+    width: min(var(--chat-max), calc(100% - var(--chat-right)));
+    margin-left: max(
+      0px,
+      min(
+        calc((100% - var(--chat-max)) / 2),
+        calc(100% - var(--chat-max) - var(--chat-right))
+      )
+    );
+  }
+  @container chat-stage (min-width: 56rem) {
+    .chat-stage[data-control-open] .chat-col {
+      --chat-right: 18.5rem;
+    }
+  }
+
   /* Diffs and tool output. */
   .diff { font: 12px/1.65 var(--font-mono); user-select: text; cursor: text; }
   .diff > div { white-space: pre; padding: 0 12px; color: var(--muted-foreground); min-width: max-content; }

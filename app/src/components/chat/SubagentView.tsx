@@ -163,8 +163,8 @@ export function SubagentView({
 
       <div ref={stage} className="relative min-h-0 flex-1">
         <Transcript transcript={displayTranscript} className="h-full" />
-        <div ref={tray} className="absolute inset-x-0 bottom-0 flex max-h-[50%] min-h-0 flex-col">
-          <div className="mx-auto flex w-full max-w-[46rem] flex-col px-3 pb-4">
+        <div ref={tray} className="pointer-events-none absolute inset-x-0 bottom-0 flex max-h-[50%] min-h-0 flex-col">
+          <div className="chat-col pointer-events-auto flex flex-col px-6 pb-4">
             {subagent.interactive ? (
               <div className="rounded-2xl border border-border bg-card shadow-[0_6px_20px_-12px_rgb(15_23_42/0.25)] dark:shadow-[0_1px_0_rgb(255_255_255/0.03)_inset,0_8px_24px_-12px_rgb(0_0_0/0.6)] focus-within:border-ring/70">
                 <textarea

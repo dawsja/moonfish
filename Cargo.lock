@@ -2619,7 +2619,6 @@ dependencies = [
  "moonfish-core",
  "moonfish-transport",
  "serde",
- "serde_json",
  "tempfile",
 ]
 

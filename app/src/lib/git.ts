@@ -18,22 +18,6 @@ export type GraphRow = { commit: Commit; lane: number; through: number[]; into: 
 export type GrepHit = { path: string; line: number; text: string }
 export type SyncOp = "fetch" | "pull" | "push" | "sync"
 export type Worktree = { path: string; branch: string | null; head: string; main: boolean; locked: boolean; prunable: boolean }
-export type Check = { name: string; state: string; url: string | null }
-export type PullRequest = {
-  number: number
-  title: string
-  state: string
-  draft: boolean
-  url: string
-  base: string
-  head: string
-  additions: number
-  deletions: number
-  review: string
-  mergeState: string
-  checks: Check[]
-}
-export type PrState = { kind: "unavailable"; reason: string } | { kind: "none"; branch: string; base: string } | { kind: "open"; pr: PullRequest }
 
 /** Which folder: a project, and optionally a worktree inside it. */
 export type Scope = { projectId: string; cwd: string | null }
@@ -63,8 +47,6 @@ export const git = {
   suggestMessage: (s: Scope) => call<[string, string]>("git_suggest_message", s),
   /** An image file as a `data:` URL. */
   readImage: (s: Scope, path: string) => call<string>("file_read_image", s, { path }),
-  prState: (s: Scope) => call<PrState>("pr_state", s),
-  prCreate: (s: Scope, title: string, body: string, base: string, draft: boolean) => call<string>("pr_create", s, { title, body, base, draft }),
 }
 
 async function project<T>(cmd: string, projectId: string, args: Record<string, unknown> = {}): Promise<T> {

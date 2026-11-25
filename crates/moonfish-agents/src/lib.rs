@@ -15,4 +15,3 @@ pub mod mock;
 pub mod oneshot;
 pub mod probe;
 pub mod search;
-pub mod transcript;

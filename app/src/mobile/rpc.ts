@@ -104,7 +104,6 @@ export const api = {
   readImage: (chatId: string, path: string) => rpc<string>("chat.readImage", { chatId, path }),
   image: (chatId: string, file: string) => rpc<string>("chat.image", { chatId, file }),
   rename: (chatId: string, title: string) => rpc<ChatMeta>("chat.rename", { chatId, title }),
-  pin: (chatId: string, pinned: boolean) => rpc<ChatMeta>("chat.pin", { chatId, pinned }),
   sleep: (chatId: string) => rpc<void>("chat.sleep", { chatId }),
   remove: (chatId: string) => rpc<void>("chat.delete", { chatId }),
   catalog: (kind: AgentKind, projectId: string | null) => rpc<Catalog>("provider.catalog", { kind, projectId }),

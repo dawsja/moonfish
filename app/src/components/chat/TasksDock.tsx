@@ -34,7 +34,7 @@ export function isDockTask(task: BackgroundTask): boolean {
 
 /** Work the agent runs beside the chat (commands left running, watchers): what's
  *  running and for how long, what ended since you last wrote, and a way to stop each. */
-export function TasksDock({ agent, tasks, onStop }: { agent: AgentKind; tasks: BackgroundTask[]; onStop?: (taskId: string) => void }) {
+export function TasksDock({ agent, tasks, onStop, className }: { agent: AgentKind; tasks: BackgroundTask[]; onStop?: (taskId: string) => void; className?: string }) {
   const [open, setOpen] = useState(false)
   // Ended tasks put away, by id: they show again only if new ones end.
   const [hidden, setHidden] = useState<string[]>([])
@@ -46,7 +46,7 @@ export function TasksDock({ agent, tasks, onStop }: { agent: AgentKind; tasks: B
   const latest = running[running.length - 1] ?? shown[shown.length - 1]
   const failed = shown.some((t) => t.status === "failed")
   return (
-    <div className="overflow-hidden rounded-2xl border bg-card text-[12.5px]" role="region" aria-label="Background work">
+    <div className={cn("overflow-hidden rounded-2xl border bg-card text-[12.5px]", className)} role="region" aria-label="Background work">
       <div className="flex h-8 items-center hover:bg-accent">
         <button className="flex h-full min-w-0 flex-1 items-center gap-2 pl-4 text-left" aria-expanded={open} onClick={() => setOpen(!open)}>
           {open ? <ChevronDown className="size-3.5 shrink-0 text-faint" /> : <ChevronRight className="size-3.5 shrink-0 text-faint" />}

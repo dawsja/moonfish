@@ -4,12 +4,12 @@ import type { PlanItem } from "@/lib/chat"
 import { cn } from "@/lib/utils"
 
 /** The agent's checklist, folded to its current step. */
-export function PlanDock({ items }: { items: PlanItem[] }) {
+export function PlanDock({ items, className }: { items: PlanItem[]; className?: string }) {
   const [open, setOpen] = useState(false)
   const done = items.filter((i) => i.status === "completed").length
   const current = items.find((i) => i.status === "inProgress") ?? items.find((i) => i.status === "pending")
   return (
-    <div className="overflow-hidden rounded-2xl border bg-card text-[12.5px]">
+    <div className={cn("overflow-hidden rounded-2xl border bg-card text-[12.5px]", className)}>
       <button
         className="flex h-8 w-full items-center gap-2 px-4 text-left hover:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring pointer-coarse:h-10"
         aria-expanded={open}

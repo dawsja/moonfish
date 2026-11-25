@@ -2557,7 +2557,7 @@ dependencies = [
 
 [[package]]
 name = "moonfish-agents"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64 0.22.1",
  "keyring",
@@ -2571,7 +2571,7 @@ dependencies = [
 
 [[package]]
 name = "moonfish-app"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64 0.22.1",
  "gethostname",
@@ -2601,7 +2601,7 @@ dependencies = [
 
 [[package]]
 name = "moonfish-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "dirs 6.0.0",
  "serde",
@@ -2613,7 +2613,7 @@ dependencies = [
 
 [[package]]
 name = "moonfish-git"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64 0.22.1",
  "moonfish-core",
@@ -2624,7 +2624,7 @@ dependencies = [
 
 [[package]]
 name = "moonfish-host"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "libc",
  "moonfish-core",
@@ -2634,7 +2634,7 @@ dependencies = [
 
 [[package]]
 name = "moonfish-phone"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "moonfish-remote",
  "serde",
@@ -2648,7 +2648,7 @@ dependencies = [
 
 [[package]]
 name = "moonfish-remote"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64 0.22.1",
  "chacha20poly1305",
@@ -2665,7 +2665,7 @@ dependencies = [
 
 [[package]]
 name = "moonfish-transport"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "libc",
  "moonfish-core",

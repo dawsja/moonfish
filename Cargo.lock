@@ -1780,9 +1780,6 @@ name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
-dependencies = [
- "foldhash 0.2.0",
-]
 
 [[package]]
 name = "heck"
@@ -2560,7 +2557,7 @@ dependencies = [
 
 [[package]]
 name = "moonfish-agents"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "keyring",
@@ -2574,7 +2571,7 @@ dependencies = [
 
 [[package]]
 name = "moonfish-app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "gethostname",
@@ -2604,7 +2601,7 @@ dependencies = [
 
 [[package]]
 name = "moonfish-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "dirs 6.0.0",
  "serde",
@@ -2616,7 +2613,7 @@ dependencies = [
 
 [[package]]
 name = "moonfish-git"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "moonfish-core",
@@ -2628,7 +2625,7 @@ dependencies = [
 
 [[package]]
 name = "moonfish-host"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libc",
  "moonfish-core",
@@ -2638,7 +2635,7 @@ dependencies = [
 
 [[package]]
 name = "moonfish-phone"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "moonfish-remote",
  "serde",
@@ -2652,7 +2649,7 @@ dependencies = [
 
 [[package]]
 name = "moonfish-remote"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "chacha20poly1305",
@@ -2669,7 +2666,7 @@ dependencies = [
 
 [[package]]
 name = "moonfish-transport"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libc",
  "moonfish-core",

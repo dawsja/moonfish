@@ -621,11 +621,8 @@ impl Translator {
                     t.item_id = v["tool_use_id"].as_str().map(String::from);
                     t.stoppable = true;
                     if kind == TaskKind::Agent {
-                        if let Some(text) = v["prompt"]
-                            .as_str()
-                            .or_else(|| v["description"].as_str())
-                            .map(str::trim)
-                            .filter(|p| !p.is_empty())
+                        if let Some(text) =
+                            v["prompt"].as_str().or_else(|| v["description"].as_str()).map(str::trim).filter(|p| !p.is_empty())
                         {
                             sub_events.push(ChatEvent::UserMessage {
                                 id: format!("{id}:init"),

@@ -431,9 +431,11 @@ async fn chat_stop_task(app: AppHandle, chat_id: String, task_id: String) -> Cmd
 
 #[tauri::command]
 async fn chat_subagent_snapshot(app: AppHandle, chat_id: String, task_id: String) -> chats::SubagentSnapshot {
-    off_main(app, move |_, state| state.chats.subagent_snapshot(&chat_id, &task_id))
-        .await
-        .unwrap_or(chats::SubagentSnapshot { events: Vec::new(), seq: 0, busy: false })
+    off_main(app, move |_, state| state.chats.subagent_snapshot(&chat_id, &task_id)).await.unwrap_or(chats::SubagentSnapshot {
+        events: Vec::new(),
+        seq: 0,
+        busy: false,
+    })
 }
 
 #[tauri::command]

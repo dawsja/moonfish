@@ -574,10 +574,8 @@ impl Chats {
                     log.events.push(ev.clone());
                     log.events.len() as u64
                 };
-                let _ = publisher.app.emit(
-                    "subagent-event",
-                    SubagentEnvelope { chat_id: &publisher.id, task_id: &task_id, event: &ev, seq },
-                );
+                let _ =
+                    publisher.app.emit("subagent-event", SubagentEnvelope { chat_id: &publisher.id, task_id: &task_id, event: &ev, seq });
                 return;
             }
             let tasks_before = activity.tasks;

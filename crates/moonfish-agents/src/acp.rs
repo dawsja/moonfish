@@ -1446,12 +1446,7 @@ fn watch_antigravity_subagent(
                             let text = clean_system_prompt(raw);
                             sink(ChatEvent::SubagentEvent {
                                 task_id: task_id.clone(),
-                                event: Box::new(ChatEvent::UserMessage {
-                                    id: format!("s{step}"),
-                                    text,
-                                    images: vec![],
-                                    files: vec![],
-                                }),
+                                event: Box::new(ChatEvent::UserMessage { id: format!("s{step}"), text, images: vec![], files: vec![] }),
                             });
                         }
                     }

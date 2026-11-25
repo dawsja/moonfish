@@ -970,7 +970,13 @@ impl Translator {
                             let kind = if item["changes"][0]["kind"]["type"] == "add" { ToolKind::Write } else { ToolKind::Edit };
                             sub_ev = Some(ChatEvent::ToolStarted {
                                 item_id: id,
-                                tool: ToolCall { kind, name: "apply_patch".into(), title: title.clone(), input: item["changes"].clone(), path },
+                                tool: ToolCall {
+                                    kind,
+                                    name: "apply_patch".into(),
+                                    title: title.clone(),
+                                    input: item["changes"].clone(),
+                                    path,
+                                },
                             });
                             st.tasks.progress(thread, None, Some(&format!("Editing {title}")))
                         }
@@ -979,7 +985,13 @@ impl Translator {
                             let title = format!("{}{}", item["server"].as_str().map(|s| format!("{s} · ")).unwrap_or_default(), name);
                             sub_ev = Some(ChatEvent::ToolStarted {
                                 item_id: id,
-                                tool: ToolCall { kind: ToolKind::Other, name, title: title.clone(), input: item["arguments"].clone(), path: None },
+                                tool: ToolCall {
+                                    kind: ToolKind::Other,
+                                    name,
+                                    title: title.clone(),
+                                    input: item["arguments"].clone(),
+                                    path: None,
+                                },
                             });
                             st.tasks.progress(thread, None, Some(&title))
                         }
@@ -987,7 +999,13 @@ impl Translator {
                             let query = s(&item["query"]);
                             sub_ev = Some(ChatEvent::ToolStarted {
                                 item_id: id,
-                                tool: ToolCall { kind: ToolKind::Web, name: "web_search".into(), title: query.clone(), input: item.clone(), path: None },
+                                tool: ToolCall {
+                                    kind: ToolKind::Web,
+                                    name: "web_search".into(),
+                                    title: query.clone(),
+                                    input: item.clone(),
+                                    path: None,
+                                },
                             });
                             st.tasks.progress(thread, None, Some(&format!("Searching {query}")))
                         }
@@ -1019,7 +1037,8 @@ impl Translator {
                         }
                         "commandExecution" => {
                             let ok = item["status"] == "completed" && item["exitCode"].as_i64().unwrap_or(0) == 0;
-                            sub_ev = Some(ChatEvent::ToolFinished { item_id: id, ok, output: clip(s(&item["aggregatedOutput"])), diff: None });
+                            sub_ev =
+                                Some(ChatEvent::ToolFinished { item_id: id, ok, output: clip(s(&item["aggregatedOutput"])), diff: None });
                             false
                         }
                         "fileChange" => {

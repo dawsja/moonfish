@@ -452,6 +452,13 @@ impl TaskList {
         }
     }
 
+    /// Removes a task by id (e.g. replacing a batch spawn placeholder with per-worker tasks).
+    pub fn remove(&mut self, id: &str) -> bool {
+        let before = self.tasks.len();
+        self.tasks.retain(|t| t.id != id);
+        self.tasks.len() != before
+    }
+
     /// Marks a running task as background work (it outlived its turn).
     pub fn promote_to_background(&mut self, id: &str) -> bool {
         let Some(t) = self.tasks.iter_mut().find(|t| t.id == id && t.is_running()) else { return false };
@@ -683,5 +690,9 @@ mod tests {
         assert!(list.stop_in_turn());
         assert_eq!(list.get("a4").unwrap().status, TaskStatus::Stopped);
         assert_eq!(list.get("a2").unwrap().status, TaskStatus::Running);
+
+        assert!(list.remove("a4"));
+        assert!(!list.remove("a4"));
+        assert!(list.get("a4").is_none());
     }
 }

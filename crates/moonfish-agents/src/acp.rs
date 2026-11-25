@@ -96,6 +96,8 @@ struct State {
     location: Location,
     subagent_sessions: HashMap<String, String>,
     direct_subagents: HashSet<String>,
+    /// Swarm worker roster name → task id, so `swarm` `kill`/`status` can finish them.
+    swarm_workers: HashMap<String, String>,
 }
 
 /// A form field from an elicitation, and how its answer goes back.
@@ -891,38 +893,82 @@ impl Translator {
             Some("completed") | Some("failed") => {
                 let ok = u["status"] == "completed";
                 let diff = diffs_of(&u["content"]);
-                let output = clip(output_of(u));
-                let launched = if ok && call.kind == ToolKind::Task { parse_subagent_launch(&output) } else { None };
-                if let Some((conv_id, log_path)) = launched {
-                    let (tasks, location, should_watch) = {
+                let raw_output = output_of(u);
+                let swarm_call = is_swarm_tool(u, &call);
+                let launches = if ok && (call.kind == ToolKind::Task || swarm_call) {
+                    parse_subagent_launches(&raw_output, &u["rawOutput"])
+                } else {
+                    Vec::new()
+                };
+                let output = clip(raw_output);
+                if !launches.is_empty() {
+                    let (tasks, location, parent_session, to_watch) = {
                         let mut st = self.state.lock().unwrap();
                         st.open.remove(&id);
                         let loading = st.loading;
-                        if !loading {
-                            let mut t = BackgroundTask::running(id.clone(), TaskKind::Agent, subagent_title(&call));
-                            t.item_id = Some(id.clone());
-                            t.session_id = Some(conv_id.clone());
-                            t.interactive = true;
-                            st.tasks.add(t);
-                            st.tasks.promote_to_background(&id);
-                            st.tasks.set_subagent_session(&id, conv_id.clone(), true);
+                        let multi = launches.len() > 1;
+                        if !loading && multi {
+                            st.tasks.remove(&id);
                         }
-                        let first_seen = st.subagent_sessions.insert(id.clone(), conv_id.clone()).is_none();
-                        ((!loading).then(|| st.tasks.event()), st.location.clone(), !loading && first_seen)
+                        let mut to_watch = Vec::new();
+                        for launch in launches {
+                            let task_id = if multi { format!("{id}:{}", launch.conversation_id) } else { id.clone() };
+                            let worker_name = launch.name.clone().or_else(|| {
+                                (!multi && launch.swarm)
+                                    .then(|| call.input["name"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(String::from))
+                                    .flatten()
+                            });
+                            let title = worker_name.clone().unwrap_or_else(|| subagent_title(&call));
+                            if !loading {
+                                let mut t = BackgroundTask::running(task_id.clone(), TaskKind::Agent, title);
+                                t.item_id = Some(id.clone());
+                                t.session_id = Some(launch.conversation_id.clone());
+                                t.interactive = true;
+                                st.tasks.add(t);
+                                st.tasks.promote_to_background(&task_id);
+                                st.tasks.set_subagent_session(&task_id, launch.conversation_id.clone(), true);
+                            }
+                            if let Some(name) = worker_name.filter(|_| launch.swarm) {
+                                st.swarm_workers.insert(name, task_id.clone());
+                            }
+                            let first_seen = st.subagent_sessions.insert(task_id.clone(), launch.conversation_id.clone()).is_none();
+                            if !loading && first_seen {
+                                to_watch.push((task_id, launch));
+                            }
+                        }
+                        ((!loading).then(|| st.tasks.event()), st.location.clone(), st.session_id.clone(), to_watch)
                     };
                     self.emit(ChatEvent::ToolFinished { item_id: id.clone(), ok, output, diff });
                     if let Some(tasks) = tasks {
                         self.emit(tasks);
                     }
-                    if should_watch {
-                        watch_antigravity_subagent(id, conv_id, log_path, location, self.state.clone(), self.sink.clone());
+                    for (task_id, launch) in to_watch {
+                        watch_antigravity_subagent(
+                            task_id,
+                            launch.conversation_id,
+                            launch.log_path,
+                            launch.swarm,
+                            parent_session.clone(),
+                            location.clone(),
+                            self.state.clone(),
+                            self.sink.clone(),
+                        );
                     }
                 } else {
+                    let killed = if ok && swarm_call { parse_swarm_killed(&output, &u["rawOutput"], &call.input) } else { Vec::new() };
                     let (tasks, notice) = {
                         let mut st = self.state.lock().unwrap();
                         st.open.remove(&id);
                         let status = if ok { TaskStatus::Completed } else { TaskStatus::Failed };
                         let detail = last_line(&output);
+                        let mut killed_any = false;
+                        if !st.loading {
+                            for name in &killed {
+                                if let Some(tid) = st.swarm_workers.remove(name) {
+                                    killed_any |= st.tasks.finish(&tid, TaskStatus::Stopped, Some("Killed".into())).is_some();
+                                }
+                            }
+                        }
                         if call.kind == ToolKind::Task && st.tasks.get(&id).is_none() && !st.loading {
                             let mut t = if st.turn_id.is_some() {
                                 BackgroundTask::in_turn(id.clone(), TaskKind::Agent, subagent_title(&call))
@@ -932,13 +978,11 @@ impl Translator {
                             t.item_id = Some(id.clone());
                             st.tasks.add(t);
                         }
-                        match st.tasks.finish(&id, status, detail) {
-                            Some(t) => {
-                                let notice = t.background.then(|| format!("Background task ended: {}", t.title));
-                                (Some(st.tasks.event()), notice)
-                            }
-                            None => (None, None),
-                        }
+                        let (finished_self, notice) = match st.tasks.finish(&id, status, detail) {
+                            Some(t) => (true, t.background.then(|| format!("Background task ended: {}", t.title))),
+                            None => (false, None),
+                        };
+                        ((finished_self || killed_any).then(|| st.tasks.event()), notice)
                     };
                     self.emit(ChatEvent::ToolFinished { item_id: id, ok, output, diff });
                     if let Some(tasks) = tasks {
@@ -1203,16 +1247,46 @@ fn tool_kind(k: &str) -> ToolKind {
 }
 
 fn is_bare_subagent_name(s: &str) -> bool {
-    matches!(s.trim().to_ascii_lowercase().as_str(), "invoke_subagent" | "swarm" | "subagent" | "agent" | "task")
+    matches!(s.trim().to_ascii_lowercase().as_str(), "invoke_subagent" | "swarm" | "swarm add" | "subagent" | "agent" | "task")
+}
+
+fn tool_head(s: &str) -> String {
+    let lower = s.trim().to_ascii_lowercase();
+    lower.split(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '-').next().unwrap_or("").to_string()
+}
+
+fn is_swarm_name(s: &str) -> bool {
+    tool_head(s) == "swarm"
 }
 
 fn is_subagent_name(s: &str) -> bool {
-    let lower = s.trim().to_ascii_lowercase();
-    let head = lower.split(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '-').next().unwrap_or("");
-    matches!(head, "invoke_subagent" | "swarm" | "subagent" | "agent" | "task")
+    matches!(tool_head(s).as_str(), "invoke_subagent" | "subagent" | "agent" | "task")
+}
+
+fn is_swarm_tool(u: &Value, call: &ToolCall) -> bool {
+    let candidates =
+        [u["name"].as_str(), u["toolName"].as_str(), u["_meta"]["toolName"].as_str(), Some(call.name.as_str()), Some(call.title.as_str())];
+    candidates.into_iter().flatten().any(is_swarm_name)
+}
+
+fn swarm_action(input: &Value) -> Option<&str> {
+    input["action"].as_str().or(input["Action"].as_str()).map(str::trim)
 }
 
 fn classify_tool(u: &Value, call: &ToolCall) -> ToolKind {
+    if is_swarm_tool(u, call) {
+        return match swarm_action(&call.input) {
+            Some(a) if a.eq_ignore_ascii_case("add") => ToolKind::Task,
+            Some(_) => ToolKind::Other,
+            None => {
+                if call.kind == ToolKind::Task {
+                    ToolKind::Task
+                } else {
+                    ToolKind::Other
+                }
+            }
+        };
+    }
     if call.kind != ToolKind::Other {
         return call.kind;
     }
@@ -1229,7 +1303,7 @@ fn subagent_title(call: &ToolCall) -> String {
     if !call.title.trim().is_empty() && !is_bare_subagent_name(&call.title) {
         return first_line(&call.title);
     }
-    ["description", "task", "prompt", "name", "subagent_name", "brief"]
+    ["description", "task", "name", "Name", "Role", "role", "subagent_name", "prompt", "Prompt", "brief", "Brief"]
         .iter()
         .find_map(|k| call.input[*k].as_str().map(first_line).filter(|s| !s.is_empty()))
         .unwrap_or_else(|| if call.title.trim().is_empty() { "Subagent".into() } else { first_line(&call.title) })
@@ -1259,16 +1333,115 @@ fn live_progress(u: &Value, existing_title: &str) -> Option<String> {
     u["title"].as_str().map(first_line).filter(|t| !t.is_empty() && t != existing_title && !is_bare_subagent_name(t))
 }
 
-fn parse_subagent_launch(output: &str) -> Option<(String, Option<String>)> {
-    let start = output.find('{')?;
-    let end = output.rfind('}')?;
-    if end <= start {
-        return None;
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SubagentLaunch {
+    conversation_id: String,
+    log_path: Option<String>,
+    name: Option<String>,
+    /// Persistent swarm worker that parks/wakes across turns via `swarm_wait`.
+    swarm: bool,
+}
+
+fn parse_json_object(output: &str) -> Option<Value> {
+    if let (Some(start), Some(end)) = (output.find('{'), output.rfind('}')) {
+        if end > start {
+            if let Ok(v) = serde_json::from_str::<Value>(&output[start..=end]) {
+                if v.is_object() {
+                    return Some(v);
+                }
+            }
+        }
     }
-    let v: Value = serde_json::from_str(&output[start..=end]).ok()?;
-    let cid = v["conversationId"].as_str().map(str::trim).filter(|s| !s.is_empty())?.to_string();
-    let log_path = v["logAbsoluteUri"].as_str().and_then(file_uri_to_path);
-    Some((cid, log_path))
+    for line in output.lines().rev() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('{') && trimmed.ends_with('}') {
+            if let Ok(v) = serde_json::from_str::<Value>(trimmed) {
+                if v.is_object() {
+                    return Some(v);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn parse_subagent_launches(output: &str, raw_output: &Value) -> Vec<SubagentLaunch> {
+    let owned;
+    let v = match parse_json_object(output) {
+        Some(obj) => {
+            owned = obj;
+            &owned
+        }
+        None if raw_output.is_object() => raw_output,
+        None => return Vec::new(),
+    };
+    let status = v["status"].as_str().map(str::trim);
+    if status.is_some_and(|s| !matches!(s, "added" | "started" | "running" | "created" | "ok")) {
+        return Vec::new();
+    }
+    let log_path = v["logAbsoluteUri"].as_str().or(v["log_absolute_uri"].as_str()).and_then(file_uri_to_path);
+    let swarm = status == Some("added") || v["open_board"].is_string();
+
+    if let Some(cids) = v["conversation_ids"].as_array().or(v["conversationIds"].as_array()) {
+        let names = v["names"].as_array();
+        let mut out = Vec::new();
+        for (i, cid_val) in cids.iter().enumerate() {
+            let Some(cid) = cid_val.as_str().map(str::trim).filter(|s| !s.is_empty()) else { continue };
+            let name = names.and_then(|arr| arr.get(i)).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+            out.push(SubagentLaunch { conversation_id: cid.to_string(), log_path: None, name, swarm });
+        }
+        return out;
+    }
+
+    if let Some(cid) = v["conversationId"].as_str().or(v["conversation_id"].as_str()).map(str::trim).filter(|s| !s.is_empty()) {
+        let name = v["name"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+        return vec![SubagentLaunch { conversation_id: cid.to_string(), log_path, name, swarm }];
+    }
+
+    Vec::new()
+}
+
+fn parse_swarm_killed(output: &str, raw_output: &Value, input: &Value) -> Vec<String> {
+    let mut names = Vec::new();
+    let owned;
+    let v = match parse_json_object(output) {
+        Some(obj) => {
+            owned = obj;
+            Some(&owned)
+        }
+        None if raw_output.is_object() => Some(raw_output),
+        None => None,
+    };
+    if let Some(v) = v {
+        if v["status"].as_str() == Some("killed") {
+            if let Some(name) = v["name"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                names.push(name.to_string());
+            }
+            if let Some(arr) = v["names"].as_array() {
+                for n in arr.iter().filter_map(Value::as_str).map(str::trim).filter(|s| !s.is_empty()) {
+                    names.push(n.to_string());
+                }
+            }
+            return names;
+        }
+        if let Some(members) = v["members"].as_array() {
+            for m in members {
+                let killed = m["killed"].as_bool() == Some(true) || m["state"].as_str() == Some("killed");
+                if killed {
+                    if let Some(name) = m["name"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                        names.push(name.to_string());
+                    }
+                }
+            }
+            return names;
+        }
+    }
+    if swarm_action(input).is_some_and(|a| a.eq_ignore_ascii_case("kill")) {
+        if let Some(name) = input["name"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
+            names.push(name.to_string());
+        }
+    }
+    names
 }
 
 fn file_uri_to_path(uri: &str) -> Option<String> {
@@ -1352,7 +1525,7 @@ fn subagent_tool_call(tc: &Value) -> ToolCall {
     let title = path
         .clone()
         .or_else(|| {
-            ["CommandLine", "command", "query", "Query", "Message", "Recipient", "Role"]
+            ["CommandLine", "command", "query", "Query", "Message", "text", "Recipient", "Role", "name"]
                 .iter()
                 .find_map(|k| unquote_arg(&args[*k]))
                 .filter(|s| !s.is_empty())
@@ -1360,6 +1533,53 @@ fn subagent_tool_call(tc: &Value) -> ToolCall {
         .map(|s| first_line(&s))
         .unwrap_or_else(|| name.clone());
     ToolCall { kind, name, title, input: args, path }
+}
+
+fn read_text_file(location: &Location, path: &str) -> Option<String> {
+    match location {
+        Location::Local => std::fs::read_to_string(path).ok(),
+        remote => {
+            let p = sh_path(path);
+            let cmd = format!("if [ -f {p} ]; then cat {p}; fi");
+            let out = moonfish_transport::run(
+                &Spec { location: remote, cwd: "~", program: "sh", args: vec!["-c".into(), cmd], env: &[] },
+                None,
+                Duration::from_secs(10),
+            )
+            .ok()?;
+            if !out.ok() || out.stdout.trim().is_empty() {
+                return None;
+            }
+            Some(out.stdout)
+        }
+    }
+}
+
+fn parse_subagent_terminal_state(raw: &str) -> Option<TaskStatus> {
+    let v: Value = serde_json::from_str(raw.trim()).ok()?;
+    match v["state"].as_str() {
+        Some("SUBAGENT_STATE_KILLED" | "SUBAGENT_STATE_STOPPED" | "SUBAGENT_STATE_CANCELLED") => Some(TaskStatus::Stopped),
+        Some("SUBAGENT_STATE_COMPLETED" | "SUBAGENT_STATE_DONE") => Some(TaskStatus::Completed),
+        Some("SUBAGENT_STATE_FAILED" | "SUBAGENT_STATE_ERROR") => Some(TaskStatus::Failed),
+        _ => None,
+    }
+}
+
+fn read_subagent_terminal_status(location: &Location, parent_session_id: &str, conversation_id: &str) -> Option<TaskStatus> {
+    let path = match location {
+        Location::Local => moonfish_core::paths::home_dir()
+            .join(".gemini")
+            .join("antigravity-cli")
+            .join("brain")
+            .join(parent_session_id)
+            .join(".system_generated")
+            .join("subagents")
+            .join(format!("{conversation_id}.json"))
+            .to_string_lossy()
+            .into_owned(),
+        _ => format!("~/.gemini/antigravity-cli/brain/{parent_session_id}/.system_generated/subagents/{conversation_id}.json"),
+    };
+    read_text_file(location, &path).as_deref().and_then(parse_subagent_terminal_state)
 }
 
 fn read_transcript_lines(location: &Location, path: &str, seen: usize) -> Option<Vec<String>> {
@@ -1385,10 +1605,13 @@ fn read_transcript_lines(location: &Location, path: &str, seen: usize) -> Option
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn watch_antigravity_subagent(
     task_id: String,
     conversation_id: String,
     log_path: Option<String>,
+    swarm: bool,
+    parent_session: Option<String>,
     location: Location,
     state: Arc<Mutex<State>>,
     sink: Sink,
@@ -1414,15 +1637,58 @@ fn watch_antigravity_subagent(
         let mut seen = 0usize;
         let mut pending_tools: VecDeque<String> = VecDeque::new();
         let mut missing_ticks = 0u32;
+        let mut idle_ticks = 0u32;
         loop {
-            {
+            let ended_externally = {
                 let st = state.lock().unwrap();
                 if !st.alive || st.direct_subagents.contains(&task_id) {
                     break;
                 }
+                st.tasks.get(&task_id).is_some_and(|t| !t.is_running())
+            };
+            if ended_externally {
+                sink(ChatEvent::SubagentEvent {
+                    task_id: task_id.clone(),
+                    event: Box::new(ChatEvent::TurnFinished {
+                        turn_id: format!("sub-{conversation_id}"),
+                        usage: None,
+                        cost_usd: None,
+                        duration_ms: None,
+                        interrupted: true,
+                    }),
+                });
+                break;
             }
             let Some(lines) = read_transcript_lines(&location, &path, seen) else {
                 missing_ticks += 1;
+                if swarm && missing_ticks.is_multiple_of(8) {
+                    if let Some(parent_sid) = parent_session.as_deref() {
+                        if let Some(status) = read_subagent_terminal_status(&location, parent_sid, &conversation_id) {
+                            sink(ChatEvent::SubagentEvent {
+                                task_id: task_id.clone(),
+                                event: Box::new(ChatEvent::TurnFinished {
+                                    turn_id: format!("sub-{conversation_id}"),
+                                    usage: None,
+                                    cost_usd: None,
+                                    duration_ms: None,
+                                    interrupted: status == TaskStatus::Stopped,
+                                }),
+                            });
+                            let ev = {
+                                let mut st = state.lock().unwrap();
+                                if st.direct_subagents.contains(&task_id) {
+                                    None
+                                } else {
+                                    st.tasks.finish(&task_id, status, None).is_some().then(|| st.tasks.event())
+                                }
+                            };
+                            if let Some(ev) = ev {
+                                sink(ev);
+                            }
+                            break;
+                        }
+                    }
+                }
                 if missing_ticks > 60 {
                     break;
                 }
@@ -1430,6 +1696,11 @@ fn watch_antigravity_subagent(
                 continue;
             };
             missing_ticks = 0;
+            if lines.is_empty() {
+                idle_ticks += 1;
+            } else {
+                idle_ticks = 0;
+            }
             let mut finished: Option<(TaskStatus, Option<String>)> = None;
             for line in lines {
                 let Ok(v) = serde_json::from_str::<Value>(line.trim()) else {
@@ -1441,13 +1712,15 @@ fn watch_antigravity_subagent(
                 let source = v["source"].as_str().unwrap_or("");
                 let status = v["status"].as_str().unwrap_or("");
                 match kind {
-                    "SYSTEM_MESSAGE" if step == 0 => {
+                    "SYSTEM_MESSAGE" if step == 0 || (swarm && step == 1) => {
                         if let Some(raw) = v["content"].as_str().filter(|s| !s.trim().is_empty()) {
                             let text = clean_system_prompt(raw);
-                            sink(ChatEvent::SubagentEvent {
-                                task_id: task_id.clone(),
-                                event: Box::new(ChatEvent::UserMessage { id: format!("s{step}"), text, images: vec![], files: vec![] }),
-                            });
+                            if !(swarm && text.starts_with("[swarm] new board message")) {
+                                sink(ChatEvent::SubagentEvent {
+                                    task_id: task_id.clone(),
+                                    event: Box::new(ChatEvent::UserMessage { id: format!("s{step}"), text, images: vec![], files: vec![] }),
+                                });
+                            }
                         }
                     }
                     "USER_INPUT" => {
@@ -1476,7 +1749,13 @@ fn watch_antigravity_subagent(
                             for (j, tc) in calls.iter().enumerate() {
                                 let item_id = format!("s{step}:c{j}");
                                 let tool = subagent_tool_call(tc);
-                                last_detail = Some(format!("{} {}", tool.name, tool.title));
+                                last_detail = Some(if tool.name == "swarm_wait" {
+                                    "Waiting on board".into()
+                                } else if tool.title == tool.name {
+                                    tool.name.clone()
+                                } else {
+                                    format!("{} {}", tool.name, tool.title)
+                                });
                                 pending_tools.push_back(item_id.clone());
                                 sink(ChatEvent::SubagentEvent {
                                     task_id: task_id.clone(),
@@ -1501,12 +1780,22 @@ fn watch_antigravity_subagent(
                         }
                         let no_calls = calls.is_none_or(|a| a.is_empty());
                         if no_calls && matches!(status, "DONE" | "ERROR" | "CANCELLED") {
-                            let task_status = match status {
-                                "ERROR" => TaskStatus::Failed,
-                                "CANCELLED" => TaskStatus::Stopped,
-                                _ => TaskStatus::Completed,
-                            };
-                            finished = Some((task_status, content.map(first_line)));
+                            if swarm {
+                                let detail = content.map(first_line).unwrap_or_else(|| "Waiting on board".into());
+                                let mut st = state.lock().unwrap();
+                                if st.tasks.progress(&task_id, None, Some(&detail)) {
+                                    let ev = st.tasks.event();
+                                    drop(st);
+                                    sink(ev);
+                                }
+                            } else {
+                                let task_status = match status {
+                                    "ERROR" => TaskStatus::Failed,
+                                    "CANCELLED" => TaskStatus::Stopped,
+                                    _ => TaskStatus::Completed,
+                                };
+                                finished = Some((task_status, content.map(first_line)));
+                            }
                         }
                     }
                     "GENERIC" if source == "MODEL" => {
@@ -1520,6 +1809,14 @@ fn watch_antigravity_subagent(
                         }
                     }
                     _ => {}
+                }
+            }
+            if swarm && finished.is_none() && idle_ticks >= 8 {
+                idle_ticks = 0;
+                if let Some(parent_sid) = parent_session.as_deref() {
+                    if let Some(status) = read_subagent_terminal_status(&location, parent_sid, &conversation_id) {
+                        finished = Some((status, None));
+                    }
                 }
             }
             if let Some((status, detail)) = finished {
@@ -2545,6 +2842,224 @@ mod tests {
         let sa2 = tasks.iter().find(|t| t.id == "sa2").unwrap();
         assert_eq!((sa2.kind, sa2.status, sa2.background, sa2.tracked), (TaskKind::Agent, TaskStatus::Running, true, false));
         assert_eq!(state.lock().unwrap().tasks.running(), 0, "untracked Antigravity task does not block sleep");
+    }
+
+    #[test]
+    fn swarm_add_keeps_workers_running_and_kill_stops_them() {
+        let lines = [
+            // Non-spawn swarm actions should NOT become subagent tasks.
+            upd(json!({
+                "sessionUpdate": "tool_call",
+                "toolCallId": "sw-title",
+                "kind": "other",
+                "title": "swarm",
+                "status": "in_progress",
+                "rawInput": {"action": "title", "title": "Remove Spaces"}
+            })),
+            upd(json!({
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "sw-title",
+                "status": "completed",
+                "content": [{"type": "content", "content": {"type": "text", "text": "{\"status\":\"titled\",\"title\":\"Remove Spaces\"}"}}]
+            })),
+            // Single worker spawn (`swarm{action:"add"}` returns snake_case `conversation_id`).
+            upd(json!({
+                "sessionUpdate": "tool_call",
+                "toolCallId": "sw-add-1",
+                "kind": "other",
+                "title": "swarm",
+                "status": "in_progress",
+                "rawInput": {"action": "add", "name": "relay-infra", "brief": "Audit packages/relay"}
+            })),
+            upd(json!({
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "sw-add-1",
+                "status": "completed",
+                "content": [{"type": "content", "content": {"type": "text", "text": "Created At: 2026-11-25T15:19:42-06:00\n{\"status\":\"added\",\"name\":\"relay-infra\",\"model\":\"gemini-4-neon-xhigh\",\"conversation_id\":\"cid-relay-1\",\"open_board\":\"Run /swarm board\"}"}}]
+            })),
+            // Multi-worker spawn (`n > 1` / `tasks` returns `names` + `conversation_ids`).
+            upd(json!({
+                "sessionUpdate": "tool_call",
+                "toolCallId": "sw-add-batch",
+                "kind": "other",
+                "title": "swarm",
+                "status": "in_progress",
+                "rawInput": {"action": "add", "name": "worker", "tasks": ["api", "web"], "brief": "Audit"}
+            })),
+            upd(json!({
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "sw-add-batch",
+                "status": "completed",
+                "content": [{"type": "content", "content": {"type": "text", "text": "{\"status\":\"added\",\"names\":[\"worker-1\",\"worker-2\"],\"conversation_ids\":[\"cid-w1\",\"cid-w2\"],\"open_board\":\"Run /swarm board\"}"}}]
+            })),
+        ];
+        let out = Arc::new(Mutex::new(Vec::new()));
+        let o = out.clone();
+        let sink: Sink = Arc::new(move |e| o.lock().unwrap().push(e));
+        let state = Arc::new(Mutex::new(State {
+            alive: true,
+            busy: true,
+            turn_id: Some("turn-1".into()),
+            stretch: 1,
+            kind: Some(AgentKind::Antigravity),
+            ..Default::default()
+        }));
+        let mut tr = Translator { sink, state: state.clone(), rpc: Rpc::new(None, "ACP") };
+        for l in &lines {
+            tr.handle(l);
+        }
+
+        // Turn finishing must keep all three spawned swarm workers running and tracked.
+        let _ = finish_turn_tasks(&mut state.lock().unwrap(), true);
+        {
+            let st = state.lock().unwrap();
+            assert!(st.tasks.get("sw-title").is_none(), "swarm title is not a subagent task");
+            assert!(st.tasks.get("sw-add-batch").is_none(), "batch placeholder replaced by per-worker tasks");
+            let relay = st.tasks.get("sw-add-1").expect("relay-infra task");
+            assert_eq!(
+                (relay.kind, relay.status, relay.title.as_str(), relay.background, relay.tracked, relay.interactive),
+                (TaskKind::Agent, TaskStatus::Running, "relay-infra", true, true, true,)
+            );
+            assert_eq!(relay.session_id.as_deref(), Some("cid-relay-1"));
+
+            let w1 = st.tasks.get("sw-add-batch:cid-w1").expect("worker-1 task");
+            let w2 = st.tasks.get("sw-add-batch:cid-w2").expect("worker-2 task");
+            assert_eq!((w1.title.as_str(), w1.item_id.as_deref(), w1.status), ("worker-1", Some("sw-add-batch"), TaskStatus::Running));
+            assert_eq!((w2.title.as_str(), w2.item_id.as_deref(), w2.status), ("worker-2", Some("sw-add-batch"), TaskStatus::Running));
+            assert_eq!(st.tasks.running(), 3);
+        }
+
+        // `swarm{action:"kill"}` ends the named worker.
+        tr.handle(&upd(json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": "sw-kill-1",
+            "kind": "other",
+            "title": "swarm",
+            "status": "in_progress",
+            "rawInput": {"action": "kill", "name": "relay-infra"}
+        })));
+        tr.handle(&upd(json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "sw-kill-1",
+            "status": "completed",
+            "content": [{"type": "content", "content": {"type": "text", "text": "{\"status\":\"killed\",\"name\":\"relay-infra\"}"}}]
+        })));
+
+        // `swarm{action:"status"}` also marks any member reported as killed.
+        tr.handle(&upd(json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": "sw-status-1",
+            "kind": "other",
+            "title": "swarm",
+            "status": "completed",
+            "rawInput": {"action": "status"},
+            "content": [{"type": "content", "content": {"type": "text", "text": "{\"members\":[{\"name\":\"worker-1\",\"state\":\"killed\",\"killed\":true},{\"name\":\"worker-2\",\"state\":\"working\",\"killed\":false}]}"}}]
+        })));
+
+        {
+            let mut st = state.lock().unwrap();
+            assert_eq!(st.tasks.get("sw-add-1").unwrap().status, TaskStatus::Stopped);
+            assert_eq!(st.tasks.get("sw-add-batch:cid-w1").unwrap().status, TaskStatus::Stopped);
+            assert_eq!(st.tasks.get("sw-add-batch:cid-w2").unwrap().status, TaskStatus::Running);
+            assert!(st.tasks.get("sw-kill-1").is_none());
+            assert!(st.tasks.get("sw-status-1").is_none());
+            // Stop background watcher threads started during the test.
+            st.alive = false;
+        }
+    }
+
+    #[test]
+    fn parses_invoke_subagent_and_swarm_launch_formats() {
+        let invoke = parse_subagent_launches(
+            "Created the following subagent:\n{\"conversationId\":\"c-inv\",\"logAbsoluteUri\":\"file:///tmp/t.jsonl\"}",
+            &Value::Null,
+        );
+        assert_eq!(
+            invoke,
+            vec![SubagentLaunch { conversation_id: "c-inv".into(), log_path: Some("/tmp/t.jsonl".into()), name: None, swarm: false }]
+        );
+
+        let swarm_obj = parse_subagent_launches(
+            "",
+            &json!({"status": "added", "name": "web", "conversation_id": "c-web", "open_board": "Run /swarm board"}),
+        );
+        assert_eq!(
+            swarm_obj,
+            vec![SubagentLaunch { conversation_id: "c-web".into(), log_path: None, name: Some("web".into()), swarm: true }]
+        );
+
+        let titled = parse_subagent_launches(r#"{"status":"titled","title":"Demo"}"#, &Value::Null);
+        assert!(titled.is_empty());
+
+        assert_eq!(parse_subagent_terminal_state(r#"{"state":"SUBAGENT_STATE_ALIVE"}"#), None);
+        assert_eq!(parse_subagent_terminal_state(r#"{"state":"SUBAGENT_STATE_KILLED"}"#), Some(TaskStatus::Stopped));
+        assert_eq!(parse_subagent_terminal_state(r#"{"state":"SUBAGENT_STATE_COMPLETED"}"#), Some(TaskStatus::Completed));
+    }
+
+    #[test]
+    fn swarm_watcher_skips_board_ping_and_stays_running_while_parked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let log = tmp.path().join("transcript.jsonl");
+        let lines = [
+            json!({"step_index":0,"source":"SYSTEM","type":"SYSTEM_MESSAGE","status":"DONE","content":"<SYSTEM_MESSAGE>\n[Message] content=[swarm] new board message #1\n</SYSTEM_MESSAGE>"}),
+            json!({"step_index":1,"source":"SYSTEM","type":"SYSTEM_MESSAGE","status":"DONE","content":"<SYSTEM_MESSAGE>\n[Message] content=You have just started. Audit apps/web.\n</SYSTEM_MESSAGE>"}),
+            json!({"step_index":2,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","tool_calls":[{"name":"read_board","args":{}},{"name":"swarm_wait","args":{}}]}),
+            json!({"step_index":3,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","content":"Waiting for phase 2"}),
+        ];
+        std::fs::write(&log, lines.iter().map(|v| v.to_string()).collect::<Vec<_>>().join("\n") + "\n").unwrap();
+
+        let out = Arc::new(Mutex::new(Vec::<ChatEvent>::new()));
+        let o = out.clone();
+        let sink: Sink = Arc::new(move |e| o.lock().unwrap().push(e));
+        let state = Arc::new(Mutex::new(State { alive: true, ..Default::default() }));
+        {
+            let mut st = state.lock().unwrap();
+            st.tasks.add(BackgroundTask::running("sw-web", TaskKind::Agent, "web"));
+        }
+        watch_antigravity_subagent(
+            "sw-web".into(),
+            "cid-web".into(),
+            Some(log.to_string_lossy().into_owned()),
+            true,
+            None,
+            Location::Local,
+            state.clone(),
+            sink,
+        );
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while std::time::Instant::now() < deadline {
+            let done = out.lock().unwrap().iter().any(|e| {
+                matches!(e, ChatEvent::SubagentEvent { task_id, event } if task_id == "sw-web" && matches!(event.as_ref(), ChatEvent::Text { text, .. } if text == "Waiting for phase 2"))
+            });
+            if done {
+                break;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+
+        let evs = out.lock().unwrap().clone();
+        // Step 0 board ping skipped; step 1 assignment shown as UserMessage.
+        let prompts: Vec<&str> = evs
+            .iter()
+            .filter_map(|e| match e {
+                ChatEvent::SubagentEvent { event, .. } => match event.as_ref() {
+                    ChatEvent::UserMessage { text, .. } => Some(text.as_str()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        assert_eq!(prompts, ["You have just started. Audit apps/web."]);
+
+        // Task stays Running (not prematurely marked Completed on a tool-less parked turn).
+        {
+            let mut st = state.lock().unwrap();
+            let t = st.tasks.get("sw-web").unwrap();
+            assert_eq!(t.status, TaskStatus::Running);
+            assert_eq!(t.detail.as_deref(), Some("Waiting for phase 2"));
+            st.alive = false;
+        }
     }
 
     #[test]
